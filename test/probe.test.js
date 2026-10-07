@@ -36,6 +36,9 @@ test('a model that gets everything right scores 100', async () => {
   assert.equal(loop.length, 3);
   assert.equal(loop[2].body.messages.at(-1).content, '35');
   assert.ok(m.requests.every((r) => r.body.stream === false));
+  // The model's own assistant turn goes back unchanged, extra fields included.
+  assert.equal(loop[1].body.messages[1].tool_calls[0].id, 'call_add');
+  assert.equal(loop[1].body.messages[1].reasoning_content, 'thinking');
 });
 
 test('wrong answers fail with a readable reason', async () => {

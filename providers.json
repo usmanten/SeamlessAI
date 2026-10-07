@@ -17,14 +17,14 @@
       "limits": { "rpm": 40, "rpd": 10000, "scope": "model" },
       "models": [
         { "id": "moonshotai/kimi-k3", "tier": "strong", "tools": true },
-        { "id": "z-ai/glm-5-3", "tier": "strong", "tools": true },
+        { "id": "z-ai/glm-5.3", "tier": "strong", "tools": true },
         { "id": "deepseek-ai/deepseek-v4.1-flash", "tier": "strong" },
         { "id": "nvidia/nemotron-3-ultra-550b-a55b", "context": 1000000, "tier": "strong", "tools": true },
         { "id": "nvidia/nemotron-3-super-120b-a12b", "context": 1000000, "tier": "good" }
       ],
       "notes": "Free with NVIDIA Developer Program membership.",
       "termsNote": "NVIDIA says free access is for prototyping, research, development and testing.",
-      "verified": "2026-10-07 model ids from the build.nvidia.com free-endpoint list, not yet live-probed"
+      "verified": "2026-10-07 model ids checked against integrate.api.nvidia.com/v1/models; kimi-k3 passed 4/5 in a live test (about 38s per request)"
     },
     {
       "id": "groq",

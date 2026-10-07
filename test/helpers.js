@@ -45,7 +45,7 @@ export function smartAnswer(body) {
 }
 
 function call(name, args) {
-  return { content: null, tool_calls: [{ id: `call_${name}`, type: 'function', function: { name, arguments: JSON.stringify(args) } }] };
+  return { content: null, reasoning_content: 'thinking', tool_calls: [{ id: `call_${name}`, type: 'function', function: { name, arguments: JSON.stringify(args) } }] };
 }
 
 export function catalogOf(...providers) {

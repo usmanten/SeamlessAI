@@ -67,7 +67,9 @@ export const TESTS = [
           if (calls < 2) return fail(`answered after ${calls} tool call(s): ${quote(message.content)}`);
           return /\b35\b/.test(String(message.content ?? '')) ? pass() : fail(`final answer ${quote(message.content)}`);
         }
-        messages.push({ role: 'assistant', content: message.content ?? null, tool_calls: message.tool_calls });
+        // Send the assistant turn back whole: reasoning models (e.g. Kimi) need
+        // their own reasoning fields to continue a tool loop.
+        messages.push({ ...message, role: 'assistant', content: message.content ?? null });
         for (const call of message.tool_calls) {
           calls++;
           messages.push({ role: 'tool', tool_call_id: call.id, content: runMathTool(call.function) });

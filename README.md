@@ -64,7 +64,7 @@ The rest are tried best first. Each gets a score out of 100:
 |------|--------|---------------------|
 | Quality | 40% | Your `seamless test` score, else the catalog's tier (strong 80, good 60, unknown 40) |
 | Reliability | 25% | Share of its last 20 requests that came back with a usable answer |
-| Speed | 15% | Average time to answer over its last 20 successes |
+| Speed | 15% | Average time to answer over its last 20 successes, else its test timing |
 | Headroom | 10% | How much of today's request and token allowance is left |
 | Stability | 10% | Permanent free tier 100, promo or trial 50 |
 

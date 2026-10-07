@@ -89,6 +89,14 @@ test('better tested models are tried first; an explicit choice still wins', asyn
   assert.equal(new Router({ catalog, config: { keys: {} } }).plan('auto')[0].id, 'weak/weak-model');
 });
 
+test('a known-slow model starts lower until live timings say otherwise', async () => {
+  const slow = await model();
+  const fast = await model();
+  const catalog = catalogOf(['slow', slow, {}, { qualityScore: 100, avgMs: 54_000 }], ['fast', fast, {}, { qualityScore: 100, avgMs: 700 }]);
+  const router = new Router({ catalog, config: { keys: {} } });
+  assert.deepEqual(router.plan('auto').map((t) => t.id), ['fast/fast-model', 'slow/slow-model']);
+});
+
 test('a model that keeps breaking drops down the ranking', async () => {
   const flaky = await model();
   const steady = await model();

@@ -1,5 +1,5 @@
 {
-  "$comment": "SeamlessAI provider catalog. Models are ranked by score (quality, live reliability and speed, today's remaining allowance, how permanent the free offer is); catalog order breaks ties. 'qualityScore' is the share of `seamless test` checks a model passed in our own runs; 'tier' is the starting guess for models we haven't scored. A user's own test results override both. 'tools': false means the model can't take tool-calling requests; leave it out when unknown. Limits are the published free-tier limits; the router also learns from 429s and retry-after headers. 'verified' records when the entry was last checked and how.",
+  "$comment": "SeamlessAI provider catalog. Models are ranked by score (quality, live reliability and speed, today's remaining allowance, how permanent the free offer is); catalog order breaks ties. 'qualityScore' is the share of `seamless test` checks a model passed in our own runs; 'avgMs' is its average answer time in those runs; 'tier' is the starting guess for models we haven't scored. A user's own test results override both. 'tools': false means the model can't take tool-calling requests; leave it out when unknown. Limits are the published free-tier limits; the router also learns from 429s and retry-after headers. 'verified' records when the entry was last checked and how.",
   "version": 1,
   "ranking": {
     "weights": { "quality": 0.4, "reliability": 0.25, "speed": 0.15, "headroom": 0.1, "stability": 0.1 }
@@ -16,11 +16,11 @@
       },
       "limits": { "rpm": 40, "rpd": 10000, "scope": "model" },
       "models": [
-        { "id": "moonshotai/kimi-k3", "qualityScore": 100, "tier": "strong", "tools": true },
-        { "id": "z-ai/glm-5.3", "qualityScore": 100, "tier": "strong", "tools": true },
-        { "id": "deepseek-ai/deepseek-v4.1-flash", "tier": "strong" },
+        { "id": "moonshotai/kimi-k3", "qualityScore": 100, "avgMs": 54100, "tier": "strong", "tools": true },
+        { "id": "z-ai/glm-5.3", "qualityScore": 100, "avgMs": 1500, "tier": "strong", "tools": true },
+        { "id": "deepseek-ai/deepseek-v4.1-flash", "avgMs": 180000, "tier": "strong" },
         { "id": "nvidia/nemotron-3-ultra-550b-a55b", "context": 1000000, "tier": "strong", "tools": true },
-        { "id": "nvidia/nemotron-3-super-120b-a12b", "qualityScore": 100, "context": 1000000, "tier": "good" }
+        { "id": "nvidia/nemotron-3-super-120b-a12b", "qualityScore": 100, "avgMs": 1500, "context": 1000000, "tier": "good" }
       ],
       "notes": "Free with NVIDIA Developer Program membership.",
       "termsNote": "NVIDIA says free access is for prototyping, research, development and testing.",
@@ -38,9 +38,9 @@
       "limits": { "rpm": 30, "rpd": 1000, "tpm": 8000, "tpd": 200000, "scope": "model" },
       "stability": "permanent",
       "models": [
-        { "id": "openai/gpt-oss-120b", "qualityScore": 100, "context": 131072, "tier": "strong", "tools": true },
-        { "id": "qwen/qwen3.8-27b", "qualityScore": 100, "context": 131072, "tier": "good", "tools": true, "limits": { "tpm": 7000 } },
-        { "id": "openai/gpt-oss-20b", "qualityScore": 100, "context": 131072, "tier": "good", "tools": true }
+        { "id": "openai/gpt-oss-120b", "qualityScore": 100, "avgMs": 700, "context": 131072, "tier": "strong", "tools": true },
+        { "id": "qwen/qwen3.8-27b", "qualityScore": 100, "avgMs": 800, "context": 131072, "tier": "good", "tools": true, "limits": { "tpm": 7000 } },
+        { "id": "openai/gpt-oss-20b", "qualityScore": 100, "avgMs": 300, "context": 131072, "tier": "good", "tools": true }
       ],
       "notes": "Very fast, but only 8,000 tokens per minute, so big agent requests go elsewhere.",
       "verified": "2026-10-07 limits from console.groq.com/docs/rate-limits; 2026-10-07 live: all three models passed every test that ran; qwen3.8-27b's input limit is 7,000 tokens/minute"
@@ -70,10 +70,10 @@
       "auth": { "required": false },
       "limits": { "rph": 200, "scope": "ip" },
       "models": [
-        { "id": "kilo-auto/free", "qualityScore": 100, "context": 256000, "tier": "good", "tools": true },
-        { "id": "poolside/laguna-s-2.1:free", "qualityScore": 100, "context": 262144, "tier": "strong", "tools": true, "stability": "promo" },
+        { "id": "kilo-auto/free", "qualityScore": 100, "avgMs": 4700, "context": 256000, "tier": "good", "tools": true },
+        { "id": "poolside/laguna-s-2.1:free", "qualityScore": 100, "avgMs": 1900, "context": 262144, "tier": "strong", "tools": true, "stability": "promo" },
         { "id": "nvidia/nemotron-3-ultra-550b-a55b:free", "context": 1000000, "tier": "strong", "tools": true, "stability": "promo" },
-        { "id": "stepfun/step-3.7-flash:free", "qualityScore": 100, "context": 262144, "tier": "good", "tools": true, "stability": "promo" }
+        { "id": "stepfun/step-3.7-flash:free", "qualityScore": 100, "avgMs": 3700, "context": 262144, "tier": "good", "tools": true, "stability": "promo" }
       ],
       "notes": "No key needed. The free model pool rotates often.",
       "mayLogPrompts": true,

@@ -87,8 +87,7 @@ export class Router {
       quality: this.probes[target.id]?.score ?? model.qualityScore ?? QUALITY_BY_TIER[model.tier] ?? 40,
       // Too few samples to judge: assume decent until shown otherwise.
       reliability: live.outcomes.length < 3 ? 80 : (100 * live.outcomes.filter(Boolean).length) / live.outcomes.length,
-      // Unmeasured models score as fast so they get tried and measured.
-      speed: live.latencies.length === 0 ? 100 : clamp(100 - (average(live.latencies) - 1000) / 290),
+      speed: speedScore(live.latencies.length ? average(live.latencies) : this.probes[target.id]?.avgMs ?? model.avgMs),
       headroom: this.headroom(target),
       stability: STABILITY[model.stability ?? provider.stability] ?? 70,
     };
@@ -357,6 +356,14 @@ function limitsOf(target) {
 
 function tokensSince(entries = [], since) {
   return entries.reduce((sum, e) => (e.t > since ? sum + e.n : sum), 0);
+}
+
+/**
+ * 100 at a second or less, 0 at 30s or more. Models never timed score as
+ * fast so they get tried and measured.
+ */
+function speedScore(ms) {
+  return ms === undefined || ms === null ? 100 : clamp(100 - (ms - 1000) / 290);
 }
 
 function average(list) {

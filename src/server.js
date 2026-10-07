@@ -3,15 +3,24 @@ import { Readable } from 'node:stream';
 import { AllProvidersFailed } from './router.js';
 
 const MAX_BODY_BYTES = 20 * 1024 * 1024;
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
 
 /**
  * A local OpenAI-compatible server. Point any tool that accepts a custom
  * base URL at http://127.0.0.1:<port>/v1 and use model "auto".
  */
-export function createServer(router, { log = () => {} } = {}) {
+export function createServer(router, { log = () => {}, localOnly = true } = {}) {
   return http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
     const route = url.pathname.replace(/\/+$/, '');
+    // Web pages the user visits can send requests to localhost too. Refuse
+    // them (and DNS-rebinding tricks) so no website can spend the user's
+    // free quota or read answers through their keys.
+    const refusal = refuseBrowserOrigin(req, localOnly);
+    if (refusal) {
+      log(`! refused request: ${refusal}`);
+      return sendError(res, 403, refusal, 'forbidden');
+    }
     try {
       if (req.method === 'GET' && (route === '' || route === '/health')) {
         return sendJson(res, 200, { ok: true, providers: router.status() });
@@ -77,6 +86,25 @@ async function chatCompletions(router, req, res, log) {
       res.destroy(err);
     })
     .pipe(res);
+}
+
+function refuseBrowserOrigin(req, localOnly) {
+  const origin = req.headers.origin;
+  if (origin !== undefined && !isLocalHost(origin)) return `requests from web pages (${String(origin).slice(0, 100)}) are not allowed`;
+  if (localOnly && !isLocalHost(`http://${req.headers.host || ''}`)) return 'unexpected Host header';
+  return null;
+}
+
+function isLocalHost(urlLike) {
+  try {
+    return LOCAL_HOSTS.has(new URL(urlLike).hostname.replace(/^\[|\]$/g, ''));
+  } catch {
+    return false;
+  }
+}
+
+export function isLoopback(host) {
+  return LOCAL_HOSTS.has(String(host).replace(/^\[|\]$/g, ''));
 }
 
 function listModels(router) {

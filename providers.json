@@ -1,6 +1,9 @@
 {
-  "$comment": "SeamlessAI provider catalog. Order matters: the router tries providers top to bottom, and each provider's models top to bottom. Limits are the published free-tier limits; the router also learns from 429s and retry-after headers. 'verified' records when the entry was last checked and how.",
+  "$comment": "SeamlessAI provider catalog. Models are ranked by score (quality, live reliability and speed, today's remaining allowance, how permanent the free offer is); catalog order breaks ties. 'qualityScore' is the share of `seamless test` checks a model passed in our own runs; 'avgMs' is its average answer time in those runs; 'tier' is the starting guess for models we haven't scored. A user's own test results override both. 'tools': false means the model can't take tool-calling requests; leave it out when unknown. Limits are the published free-tier limits; the router also learns from 429s and retry-after headers. 'verified' records when the entry was last checked and how.",
   "version": 1,
+  "ranking": {
+    "weights": { "quality": 0.4, "reliability": 0.25, "speed": 0.15, "headroom": 0.1, "stability": 0.1 }
+  },
   "providers": [
     {
       "id": "nvidia",
@@ -13,11 +16,15 @@
       },
       "limits": { "rpm": 40, "rpd": 10000, "scope": "model" },
       "models": [
-        { "id": "nvidia/nemotron-3-super-120b-a12b", "context": 1000000, "tier": "strong" },
-        { "id": "mistralai/mistral-large-2-instruct", "context": 128000, "tier": "good" }
+        { "id": "moonshotai/kimi-k3", "qualityScore": 100, "avgMs": 54100, "tier": "strong", "tools": true },
+        { "id": "z-ai/glm-5.3", "qualityScore": 100, "avgMs": 1500, "tier": "strong", "tools": true },
+        { "id": "deepseek-ai/deepseek-v4.1-flash", "avgMs": 180000, "tier": "strong" },
+        { "id": "nvidia/nemotron-3-ultra-550b-a55b", "context": 1000000, "tier": "strong", "tools": true },
+        { "id": "nvidia/nemotron-3-super-120b-a12b", "qualityScore": 100, "avgMs": 1500, "context": 1000000, "tier": "good" }
       ],
       "notes": "Free with NVIDIA Developer Program membership.",
-      "verified": "2026-10-07 from public docs, not yet live-probed"
+      "termsNote": "NVIDIA says free access is for prototyping, research, development and testing.",
+      "verified": "2026-10-07 live: kimi-k3, glm-5.3 and nemotron-3-super 5/5 (kimi ~40-55s per request); deepseek-v4.1-flash timed out on every request; nemotron-3-ultra returned 500/503 (overloaded)"
     },
     {
       "id": "groq",
@@ -28,14 +35,33 @@
         "env": "GROQ_API_KEY",
         "signupUrl": "https://console.groq.com/keys"
       },
-      "limits": { "rpm": 30, "rpd": 1000, "scope": "model" },
+      "limits": { "rpm": 30, "rpd": 1000, "tpm": 8000, "tpd": 200000, "scope": "model" },
+      "stability": "permanent",
       "models": [
-        { "id": "openai/gpt-oss-120b", "context": 131072, "tier": "strong" },
-        { "id": "qwen/qwen3.8-27b", "context": 131072, "tier": "good" },
-        { "id": "openai/gpt-oss-20b", "context": 131072, "tier": "good" }
+        { "id": "openai/gpt-oss-120b", "qualityScore": 100, "avgMs": 700, "context": 131072, "tier": "strong", "tools": true },
+        { "id": "qwen/qwen3.8-27b", "qualityScore": 100, "avgMs": 800, "context": 131072, "tier": "good", "tools": true, "limits": { "tpm": 7000 } },
+        { "id": "openai/gpt-oss-20b", "qualityScore": 100, "avgMs": 300, "context": 131072, "tier": "good", "tools": true }
       ],
-      "notes": "Very fast inference.",
-      "verified": "2026-10-07 from public docs, not yet live-probed"
+      "notes": "Very fast, but only 8,000 tokens per minute, so big agent requests go elsewhere.",
+      "verified": "2026-10-07 limits from console.groq.com/docs/rate-limits; 2026-10-07 live: all three models passed every test that ran; qwen3.8-27b's input limit is 7,000 tokens/minute"
+    },
+    {
+      "id": "cerebras",
+      "name": "Cerebras",
+      "baseUrl": "https://api.cerebras.ai/v1",
+      "auth": {
+        "required": true,
+        "env": "CEREBRAS_API_KEY",
+        "signupUrl": "https://cloud.cerebras.ai"
+      },
+      "limits": { "rpm": 5, "tpm": 30000, "tpd": 1000000, "scope": "model" },
+      "stability": "trial",
+      "models": [
+        { "id": "gpt-oss-120b", "tier": "strong", "tools": true },
+        { "id": "qwen-3.8-27b", "tier": "good" }
+      ],
+      "notes": "Fast, with 1M tokens a day per model, but Cerebras calls this a free trial and asks for a payment method at signup. Optional.",
+      "verified": "2026-10-07 limits from inference-docs.cerebras.ai/support/rate-limits, not yet live-probed"
     },
     {
       "id": "kilo",
@@ -44,11 +70,14 @@
       "auth": { "required": false },
       "limits": { "rph": 200, "scope": "ip" },
       "models": [
-        { "id": "kilo-auto/free", "context": 128000, "tier": "good" }
+        { "id": "kilo-auto/free", "qualityScore": 100, "avgMs": 4700, "context": 256000, "tier": "good", "tools": true },
+        { "id": "poolside/laguna-s-2.1:free", "qualityScore": 100, "avgMs": 1900, "context": 262144, "tier": "strong", "tools": true, "stability": "promo" },
+        { "id": "nvidia/nemotron-3-ultra-550b-a55b:free", "context": 1000000, "tier": "strong", "tools": true, "stability": "promo" },
+        { "id": "stepfun/step-3.7-flash:free", "qualityScore": 100, "avgMs": 3700, "context": 262144, "tier": "good", "tools": true, "stability": "promo" }
       ],
-      "notes": "No key needed. The free model pool rotates often. May log prompts.",
+      "notes": "No key needed. The free model pool rotates often.",
       "mayLogPrompts": true,
-      "verified": "2026-10-07 live: answered via kilo-auto/free; sometimes returns 200 with an error body when its upstream is overloaded"
+      "verified": "2026-10-07 free models from api.kilo.ai/api/gateway/models; 2026-10-07 live: kilo-auto/free, laguna-s-2.1 and step-3.7-flash passed every test that ran (some rate limited); nemotron-3-ultra:free hit upstream 503s; sometimes returns 200 with an error body"
     },
     {
       "id": "ovhcloud",
@@ -56,6 +85,7 @@
       "baseUrl": "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1",
       "auth": { "required": false, "env": "OVH_AI_ENDPOINTS_ACCESS_TOKEN" },
       "limits": { "rpm": 2, "scope": "model" },
+      "stability": "permanent",
       "models": [
         { "id": "gpt-oss-120b", "context": 131072, "tier": "strong" },
         { "id": "Meta-Llama-3_3-70B-Instruct", "context": 131072, "tier": "good" }

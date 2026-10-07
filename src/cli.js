@@ -1,6 +1,7 @@
-import { DEFAULT_PORT, loadCatalog, loadConfig, saveConfig, keyFor } from './config.js';
+import { DEFAULT_PORT, loadCatalog, loadConfig, saveConfig, keyFor, loadProbes, saveProbes } from './config.js';
+import { probeTarget, TESTS } from './probe.js';
 import { Router, AllProvidersFailed } from './router.js';
-import { createServer } from './server.js';
+import { createServer, isLoopback } from './server.js';
 
 const HELP = `seamless: keep coding on free AI providers when your credits run out
 
@@ -15,6 +16,13 @@ Usage:
 
   seamless providers
       List providers, which ones are usable, and how to get keys.
+
+  seamless test [<provider> | <provider>/<model>,...] [--only tool-call,basic]
+      Run the model test suite against your usable models and save the
+      scores, which SeamlessAI then uses to rank models.
+
+  seamless private on | off
+      Private mode skips providers that may log or train on your prompts.
 
   seamless keys set <provider> <key>
   seamless keys remove <provider>
@@ -34,6 +42,10 @@ export async function main(argv) {
       return providers();
     case 'keys':
       return keys(args);
+    case 'test':
+      return testModels(args[0], flags);
+    case 'private':
+      return privateMode(args[0]);
     case undefined:
     case 'help':
     case '--help':
@@ -50,7 +62,7 @@ function start(flags) {
   const port = Number(flags.port || process.env.SEAMLESS_PORT || DEFAULT_PORT);
   const host = flags.host || '127.0.0.1';
   const log = flags.quiet ? () => {} : (line) => console.log(line);
-  const router = new Router({ catalog: loadCatalog(), config: loadConfig(), log });
+  const router = new Router({ catalog: loadCatalog(), config: loadConfig(), probes: loadProbes(), log });
 
   const usable = router.status().filter((p) => p.usable);
   if (usable.length === 0) {
@@ -59,9 +71,11 @@ function start(flags) {
     return;
   }
 
-  const server = createServer(router, { log });
+  if (!isLoopback(host)) console.warn(`Warning: listening on ${host} lets other devices on your network use your provider keys.`);
+  const server = createServer(router, { log, localOnly: isLoopback(host) });
   server.listen(port, host, () => {
     console.log(`SeamlessAI listening on http://${host}:${port}/v1`);
+    if (loadConfig().privateMode) console.log('Private mode is on: providers that may log or train on prompts are skipped.');
     console.log(`Fallback order: ${router.targets().map((t) => t.id).join(' → ')}`);
     console.log('Point your tool at that base URL with any API key and model "auto".');
   });
@@ -74,7 +88,7 @@ async function ask(prompt, flags) {
     process.exitCode = 1;
     return;
   }
-  const router = new Router({ catalog: loadCatalog(), config: loadConfig(), log: (l) => console.error(l) });
+  const router = new Router({ catalog: loadCatalog(), config: loadConfig(), probes: loadProbes(), log: (l) => console.error(l) });
   try {
     const { response, target } = await router.dispatch({
       model: flags.model || 'auto',
@@ -102,8 +116,56 @@ function providers() {
     if (needsKey && !hasKey) {
       console.log(`           get a free key at ${p.auth.signupUrl}, then: seamless keys set ${p.id} <key>`);
     }
-    if (p.mayLogPrompts) console.log('           note: this provider may log prompts');
+    if (p.mayLogPrompts || p.trainsOnPrompts) console.log(`           note: this provider may ${p.trainsOnPrompts ? 'train on' : 'log'} prompts (skipped in private mode)`);
+    if (p.termsNote) console.log(`           terms: ${p.termsNote}`);
   }
+}
+
+async function testModels(filter, flags) {
+  // Big models can take a while to answer the longer tests.
+  const router = new Router({ catalog: loadCatalog(), config: loadConfig(), timeoutMs: 180_000 });
+  const wanted = typeof filter === 'string' ? filter.split(',') : null;
+  const targets = router.targets().filter((t) => !wanted || wanted.includes(t.id) || wanted.includes(t.provider.id));
+  if (targets.length === 0) {
+    console.error(filter ? `No usable model matches "${filter}". See \`seamless providers\`.` : 'No providers are usable. Run `seamless providers`.');
+    process.exitCode = 1;
+    return;
+  }
+  const only = typeof flags.only === 'string' ? flags.only.split(',') : undefined;
+  const unknown = (only || []).filter((id) => !TESTS.some((t) => t.id === id));
+  if (unknown.length) {
+    console.error(`Unknown test(s): ${unknown.join(', ')}. Tests: ${TESTS.map((t) => t.id).join(', ')}`);
+    process.exitCode = 1;
+    return;
+  }
+
+  console.log(`Testing ${targets.length} model(s): ${TESTS.filter((t) => !only || only.includes(t.id)).map((t) => t.id).join(', ')}`);
+  console.log('Only made-up test prompts are sent. Slow or rate-limited providers can take a few minutes.\n');
+  const saved = {};
+  for (const target of targets) {
+    process.stdout.write(`${target.id} … `);
+    const result = await probeTarget(router, target, { only });
+    saved[target.id] = result;
+    saveProbes({ [target.id]: result }); // save as we go, so an interrupted run keeps what it has
+    console.log(result.score === null ? `not enough tests ran to score (${result.ran} of ${result.results.length})` : `${result.score}/100 (${result.passed}/${result.ran} passed${result.avgMs ? `, ~${(result.avgMs / 1000).toFixed(1)}s each` : ''})`);
+    for (const r of result.results) {
+      const mark = r.status === 'pass' ? '✓' : r.status === 'fail' ? '✗' : '–';
+      console.log(`    ${mark} ${r.test.padEnd(11)}${r.detail ? ` ${r.detail}` : ''}`);
+    }
+  }
+  console.log('\nSaved to ~/.seamless/probes.json. `seamless start` now ranks models with these scores.');
+}
+
+function privateMode(value) {
+  if (!['on', 'off'].includes(value)) {
+    console.error('Usage: seamless private on | off');
+    process.exitCode = 1;
+    return;
+  }
+  const config = loadConfig();
+  config.privateMode = value === 'on';
+  saveConfig(config);
+  console.log(config.privateMode ? 'Private mode on: providers that may log or train on prompts will be skipped.' : 'Private mode off.');
 }
 
 function keys([action, providerId, key]) {

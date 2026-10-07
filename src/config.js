@@ -26,10 +26,32 @@ export function loadConfig() {
 }
 
 export function saveConfig(config) {
-  fs.mkdirSync(homeDir(), { recursive: true, mode: 0o700 });
   // Keys live here, so keep the file private to the user.
-  fs.writeFileSync(configPath(), JSON.stringify(config, null, 2) + '\n', { mode: 0o600 });
-  fs.chmodSync(configPath(), 0o600);
+  writePrivate(configPath(), config);
+}
+
+function probesPath() {
+  return path.join(homeDir(), 'probes.json');
+}
+
+/** Results of `seamless test`, by target id ("provider/model"). */
+export function loadProbes() {
+  try {
+    return JSON.parse(fs.readFileSync(probesPath(), 'utf8')).results || {};
+  } catch (err) {
+    if (err.code === 'ENOENT') return {};
+    throw new Error(`Could not read ${probesPath()}: ${err.message}`);
+  }
+}
+
+export function saveProbes(results) {
+  writePrivate(probesPath(), { version: 1, results: { ...loadProbes(), ...results } });
+}
+
+function writePrivate(file, data) {
+  fs.mkdirSync(homeDir(), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(file, JSON.stringify(data, null, 2) + '\n', { mode: 0o600 });
+  fs.chmodSync(file, 0o600);
 }
 
 /**
@@ -50,6 +72,9 @@ export function loadCatalog() {
 
 function validateCatalog(catalog, file) {
   if (!Array.isArray(catalog.providers)) throw new Error(`${file}: "providers" must be an array`);
+  for (const [part, weight] of Object.entries(catalog.ranking?.weights || {})) {
+    if (typeof weight !== 'number' || weight < 0) throw new Error(`${file}: ranking weight "${part}" must be a number of 0 or more`);
+  }
   for (const p of catalog.providers) {
     if (!p.id || !p.baseUrl || !Array.isArray(p.models) || p.models.length === 0) {
       throw new Error(`${file}: provider ${p.id || '(no id)'} needs id, baseUrl and at least one model`);

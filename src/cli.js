@@ -17,7 +17,7 @@ Usage:
   seamless providers
       List providers, which ones are usable, and how to get keys.
 
-  seamless test [<provider> | <provider>/<model>] [--only tool-call,basic]
+  seamless test [<provider> | <provider>/<model>,...] [--only tool-call,basic]
       Run the model test suite against your usable models and save the
       scores, which SeamlessAI then uses to rank models.
 
@@ -124,7 +124,8 @@ function providers() {
 async function testModels(filter, flags) {
   // Big models can take a while to answer the longer tests.
   const router = new Router({ catalog: loadCatalog(), config: loadConfig(), timeoutMs: 180_000 });
-  const targets = router.targets().filter((t) => !filter || t.id === filter || t.provider.id === filter);
+  const wanted = typeof filter === 'string' ? filter.split(',') : null;
+  const targets = router.targets().filter((t) => !wanted || wanted.includes(t.id) || wanted.includes(t.provider.id));
   if (targets.length === 0) {
     console.error(filter ? `No usable model matches "${filter}". See \`seamless providers\`.` : 'No providers are usable. Run `seamless providers`.');
     process.exitCode = 1;
@@ -146,7 +147,7 @@ async function testModels(filter, flags) {
     const result = await probeTarget(router, target, { only });
     saved[target.id] = result;
     saveProbes({ [target.id]: result }); // save as we go, so an interrupted run keeps what it has
-    console.log(result.score === null ? 'nothing could run' : `${result.score}/100 (${result.passed}/${result.ran} passed${result.avgMs ? `, ~${(result.avgMs / 1000).toFixed(1)}s each` : ''})`);
+    console.log(result.score === null ? `not enough tests ran to score (${result.ran} of ${result.results.length})` : `${result.score}/100 (${result.passed}/${result.ran} passed${result.avgMs ? `, ~${(result.avgMs / 1000).toFixed(1)}s each` : ''})`);
     for (const r of result.results) {
       const mark = r.status === 'pass' ? '✓' : r.status === 'fail' ? '✗' : '–';
       console.log(`    ${mark} ${r.test.padEnd(11)}${r.detail ? ` ${r.detail}` : ''}`);

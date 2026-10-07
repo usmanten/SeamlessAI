@@ -85,14 +85,14 @@ test('waits out a short per-minute limit instead of skipping', async () => {
   const router = new Router({ catalog: catalogOf(['p', m, { limits: { rpm: 1, scope: 'model' } }]), config: { keys: {} }, now: () => clock });
   const slept = [];
   const result = await probeTarget(router, router.targets()[0], {
-    only: ['basic', 'code-fix'],
+    only: ['basic', 'code-fix', 'long-input'],
     sleep: async (ms) => {
       slept.push(ms);
       clock += ms;
     },
   });
   assert.equal(result.score, 100);
-  assert.equal(slept.length, 1);
+  assert.equal(slept.length, 2);
 });
 
 test('skips the long test when the model context is too small, and tool tests for models without tools', async () => {
@@ -101,7 +101,26 @@ test('skips the long test when the model context is too small, and tool tests fo
   const result = await probeTarget(router, target);
   const status = Object.fromEntries(result.results.map((r) => [r.test, r.status]));
   assert.deepEqual(status, { basic: 'pass', 'tool-call': 'skipped', 'tool-loop': 'skipped', 'code-fix': 'pass', 'long-input': 'skipped' });
-  assert.equal(result.score, 100);
+  assert.equal(result.score, null, 'two tests are too few to score');
+});
+
+test('a model that keeps timing out is given up on after two tries', async () => {
+  const m = await model(() => ({ content: 'PONG' }));
+  const { router, target } = routerFor(m);
+  router.fetch = async () => {
+    throw new DOMException('Upstream timed out', 'TimeoutError');
+  };
+  const result = await probeTarget(router, target);
+  assert.deepEqual(result.results.map((r) => r.status), ['fail', 'fail', 'skipped', 'skipped', 'skipped']);
+  assert.equal(result.score, 0);
+});
+
+test('a request too large for a provider limit is skipped, not failed', async () => {
+  const m = await model(() => ({ status: 413, error: 'Request too large: Limit 7000, Requested 7037' }));
+  const { router, target } = routerFor(m);
+  const result = await probeTarget(router, target, { only: ['long-input'] });
+  assert.equal(result.results[0].status, 'skipped');
+  assert.match(result.results[0].detail, /too large/);
 });
 
 test('tool arguments are treated as data, never run', async () => {

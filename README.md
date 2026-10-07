@@ -78,7 +78,7 @@ seamless test nvidia     # one provider
 seamless test groq/openai/gpt-oss-120b --only tool-call,basic
 ```
 
-Five short tests, each sending a made-up prompt (never your code): follow a simple instruction, call a tool with valid arguments, use tool results over several rounds, fix a one-line bug, and find a detail in a ~5,000-token log. Answers are checked with plain text and JSON checks; nothing a model writes is ever run. Scores are saved to `~/.seamless/probes.json` and used by `seamless start`. Testing uses your free quota (about 7 requests per model) and waits out short rate limits.
+Five short tests, each sending a made-up prompt (never your code): follow a simple instruction, call a tool with valid arguments, use tool results over several rounds, fix a one-line bug, and find a detail in a ~4,000-token log. Answers are checked with plain text and JSON checks; nothing a model writes is ever run. Scores are saved to `~/.seamless/probes.json` and used by `seamless start`. Testing uses your free quota (about 7 requests per model) and waits out short rate limits. Tests that hit a rate limit are skipped rather than failed, and a model needs at least 3 tests to get a score.
 
 ## How fallback works
 

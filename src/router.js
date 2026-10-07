@@ -103,7 +103,7 @@ export class Router {
    * and per-hour limits recover quickly, so they only block, they don't rank.
    */
   headroom(target) {
-    const limits = target.provider.limits || {};
+    const limits = limitsOf(target);
     const bucket = this.limitBucket(target);
     const since = this.now() - DAY;
     let left = 1;
@@ -120,8 +120,9 @@ export class Router {
     const { model, provider } = target;
     if (need.tools && model.tools === false) return 'model cannot use tools';
     if (model.context && need.tokens > model.context) return `request (~${need.tokens} tokens) is bigger than its ${model.context}-token context`;
-    if (provider.limits?.tpm && need.tokens > provider.limits.tpm) {
-      return `request (~${need.tokens} tokens) is bigger than its ${provider.limits.tpm} tokens/minute limit`;
+    const { tpm } = limitsOf(target);
+    if (tpm && need.tokens > tpm) {
+      return `request (~${need.tokens} tokens) is bigger than its ${tpm} tokens/minute limit`;
     }
     if (keyFor(provider, this.config) && !safeForKey(provider.baseUrl)) return 'its key would be sent over plain http';
     if (this.config.privateMode && (provider.mayLogPrompts || provider.trainsOnPrompts)) return 'private mode: provider may log or train on prompts';
@@ -173,8 +174,11 @@ export class Router {
         res = await this.send(target, body, signal);
       } catch (err) {
         if (signal?.aborted) throw err;
-        const reason = err.name === 'TimeoutError' ? 'timed out' : `network error: ${err.message}`;
-        this.bench(this.providerBucket(target), COOLDOWN.network, reason);
+        const timedOut = err.name === 'TimeoutError';
+        const reason = timedOut ? 'timed out' : `network error: ${err.message}`;
+        // A slow model says nothing about the provider's other models; a
+        // network failure usually does.
+        this.bench(timedOut ? target.id : this.providerBucket(target), COOLDOWN.network, reason);
         this.recordOutcome(target, false);
         attempts.push({ target: target.id, error: reason });
         this.log(`  ✗ ${target.id} ${reason}`);
@@ -278,7 +282,7 @@ export class Router {
     }
 
     // Stay under published limits instead of waiting to be told off.
-    const limits = target.provider.limits || {};
+    const limits = limitsOf(target);
     const stamps = this.usage.get(this.limitBucket(target)) || [];
     for (const [field, window] of [['rpm', MINUTE], ['rph', HOUR], ['rpd', DAY]]) {
       if (!limits[field]) continue;
@@ -330,18 +334,25 @@ export class Router {
 
 /**
  * What a request asks of a model: whether it uses tools, and roughly how many
- * tokens it takes up (about 4 characters per token, plus the reply budget).
+ * tokens it takes up, plus the reply budget. Code, numbers and JSON run close
+ * to 3 characters per token (Groq counted ~2.6 for a log full of numbers), so
+ * this errs high: better to skip a provider than to be refused by it.
  */
 export function requestNeeds(body) {
   const chars = JSON.stringify(body.messages ?? []).length + (body.tools ? JSON.stringify(body.tools).length : 0);
   const reply = Number(body.max_completion_tokens ?? body.max_tokens) || 0;
-  return { tools: Array.isArray(body.tools) && body.tools.length > 0, tokens: Math.ceil(chars / 4) + reply };
+  return { tools: Array.isArray(body.tools) && body.tools.length > 0, tokens: Math.ceil(chars / 3) + reply };
 }
 
 /** Keys only travel over https, or plain http to this machine. */
 export function safeForKey(url) {
   const { protocol, hostname } = new URL(url);
   return protocol === 'https:' || ['localhost', '127.0.0.1', '[::1]', '::1'].includes(hostname);
+}
+
+/** Provider limits, with any per-model overrides (some models have tighter ones). */
+function limitsOf(target) {
+  return { ...target.provider.limits, ...target.model.limits };
 }
 
 function tokensSince(entries = [], since) {

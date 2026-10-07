@@ -39,11 +39,11 @@
       "stability": "permanent",
       "models": [
         { "id": "openai/gpt-oss-120b", "context": 131072, "tier": "strong", "tools": true },
-        { "id": "qwen/qwen3.8-27b", "context": 131072, "tier": "good", "tools": true },
+        { "id": "qwen/qwen3.8-27b", "context": 131072, "tier": "good", "tools": true, "limits": { "tpm": 7000 } },
         { "id": "openai/gpt-oss-20b", "context": 131072, "tier": "good", "tools": true }
       ],
       "notes": "Very fast, but only 8,000 tokens per minute, so big agent requests go elsewhere.",
-      "verified": "2026-10-07 limits from console.groq.com/docs/rate-limits; gpt-oss-120b answered in live test"
+      "verified": "2026-10-07 limits from console.groq.com/docs/rate-limits; live test 2026-10-07: gpt-oss-120b and gpt-oss-20b 5/5, qwen3.8-27b refused a 7,037-token request (its input limit is 7,000 tokens/minute)"
     },
     {
       "id": "cerebras",

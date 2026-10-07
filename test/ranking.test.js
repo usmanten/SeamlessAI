@@ -42,6 +42,18 @@ test('requests too big for a context or a per-minute token limit go elsewhere', 
   assert.match(attempts[1].skipped, /bigger than its 2000 tokens\/minute limit/);
 });
 
+test('a model can have a tighter token limit than its provider', async () => {
+  const strict = await model();
+  const roomy = await model();
+  const router = new Router({
+    catalog: catalogOf(['strict', strict, { limits: { tpm: 8000 } }, { limits: { tpm: 1000 } }], ['roomy', roomy, { limits: { tpm: 8000 } }]),
+    config: { keys: {} },
+  });
+  const { target, attempts } = await router.dispatch(chat({ messages: [{ role: 'user', content: 'x'.repeat(6000) }] }));
+  assert.equal(target.provider.id, 'roomy');
+  assert.match(attempts[0].skipped, /1000 tokens\/minute/);
+});
+
 test('token budgets fill up and free again after a minute', async () => {
   const a = await model();
   const b = await model();
@@ -120,7 +132,7 @@ test('keys are never sent over plain http to another machine', async () => {
 test('estimates request size from messages, tools and the reply budget', () => {
   const need = requestNeeds({ messages: [{ role: 'user', content: 'x'.repeat(400) }], tools: TOOLS, max_tokens: 100 });
   assert.equal(need.tools, true);
-  assert.ok(need.tokens > 200 && need.tokens < 250, `got ${need.tokens}`);
+  assert.ok(need.tokens > 250 && need.tokens < 300, `got ${need.tokens}`);
 });
 
 test('the server refuses requests from web pages and unexpected hosts', async () => {

@@ -6,6 +6,7 @@ import { errorIn, readSnippet, requestNeeds } from './router.js';
 
 const MAX_WAIT_MS = 65_000; // wait out a per-minute limit, but not longer
 const TOOL_ROUNDS = 6;
+const MIN_RAN = 3; // fewer tests than this actually run: not enough to score
 
 class Skip extends Error {}
 
@@ -92,7 +93,7 @@ export const TESTS = [
   },
   {
     id: 'long-input',
-    about: 'finds one detail in a long log (~5K tokens)',
+    about: 'finds one detail in a long log (~4K tokens)',
     async run(ask, target) {
       const log = longLog();
       const body = { messages: [user(`${log}\n\nWhat is the deploy code mentioned in the log above? Reply with just the code.`)] };
@@ -130,6 +131,8 @@ export async function probeTarget(router, target, { only, sleep = defaultSleep }
       // A missing model or rejected key will fail every test the same way;
       // don't spend quota proving it.
       if ([401, 403, 404].includes(err.status)) unreachable = `model unreachable (${err.status})`;
+      // Two timeouts in a row: the model is down or far too slow to be useful.
+      if (err.message === 'timed out' && results.at(-2)?.detail === 'timed out') unreachable = 'model keeps timing out';
     }
   }
 
@@ -138,7 +141,10 @@ export async function probeTarget(router, target, { only, sleep = defaultSleep }
   const times = passed.map((r) => r.ms);
   return {
     id: target.id,
-    score: ran.length ? Math.round((100 * passed.length) / ran.length) : null,
+    // Too few tests ran (rate limits, skips) for a fair score: leave it unset
+    // so ranking falls back to the catalog tier.
+    // A model we know is missing or down scores 0.
+    score: unreachable ? 0 : ran.length >= MIN_RAN ? Math.round((100 * passed.length) / ran.length) : null,
     passed: passed.length,
     ran: ran.length,
     avgMs: times.length ? Math.round(times.reduce((a, b) => a + b, 0) / times.length) : null,
@@ -169,6 +175,9 @@ async function ask(router, target, body, sleep) {
   }
   if (!res.ok) {
     if (res.status === 429) throw new Skip('rate limited');
+    // Too big for a limit (e.g. Groq's input tokens per minute): a capacity
+    // limit, not a wrong answer.
+    if (res.status === 413) throw new Skip(`too large for its limits: ${await readSnippet(res)}`.slice(0, 160));
     throw new Failed(`${res.status} ${await readSnippet(res)}`.trim(), res.status);
   }
   let json;
@@ -206,8 +215,8 @@ function parseArgs(raw) {
 
 function longLog() {
   const lines = [];
-  for (let i = 1; i <= 400; i++) {
-    lines.push(i === 287 ? `line ${i}: deploy code is ORCHID-4417` : `line ${i}: request handled in ${(i * 37) % 500} ms, status ok`);
+  for (let i = 1; i <= 300; i++) {
+    lines.push(i === 213 ? `line ${i}: deploy code is ORCHID-4417` : `line ${i}: request handled in ${(i * 37) % 500} ms, status ok`);
   }
   return lines.join('\n');
 }

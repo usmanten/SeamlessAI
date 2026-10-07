@@ -24,7 +24,7 @@
       ],
       "notes": "Free with NVIDIA Developer Program membership.",
       "termsNote": "NVIDIA says free access is for prototyping, research, development and testing.",
-      "verified": "2026-10-07 2026-10-07 live: kimi-k3, glm-5.3 and nemotron-3-super 5/5 (kimi ~40-55s per request); deepseek-v4.1-flash timed out on every request; nemotron-3-ultra returned 500/503 (overloaded)"
+      "verified": "2026-10-07 live: kimi-k3, glm-5.3 and nemotron-3-super 5/5 (kimi ~40-55s per request); deepseek-v4.1-flash timed out on every request; nemotron-3-ultra returned 500/503 (overloaded)"
     },
     {
       "id": "groq",

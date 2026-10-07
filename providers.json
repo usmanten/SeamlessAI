@@ -1,0 +1,67 @@
+{
+  "$comment": "SeamlessAI provider catalog. Order matters: the router tries providers top to bottom, and each provider's models top to bottom. Limits are the published free-tier limits; the router also learns from 429s and retry-after headers. 'verified' records when the entry was last checked and how.",
+  "version": 1,
+  "providers": [
+    {
+      "id": "nvidia",
+      "name": "NVIDIA NIM",
+      "baseUrl": "https://integrate.api.nvidia.com/v1",
+      "auth": {
+        "required": true,
+        "env": "NVIDIA_API_KEY",
+        "signupUrl": "https://build.nvidia.com"
+      },
+      "limits": { "rpm": 40, "rpd": 10000, "scope": "model" },
+      "models": [
+        { "id": "nvidia/nemotron-3-super-120b-a12b", "context": 1000000, "tier": "strong" },
+        { "id": "mistralai/mistral-large-2-instruct", "context": 128000, "tier": "good" }
+      ],
+      "notes": "Free with NVIDIA Developer Program membership.",
+      "verified": "2026-10-07 from public docs, not yet live-probed"
+    },
+    {
+      "id": "groq",
+      "name": "Groq",
+      "baseUrl": "https://api.groq.com/openai/v1",
+      "auth": {
+        "required": true,
+        "env": "GROQ_API_KEY",
+        "signupUrl": "https://console.groq.com/keys"
+      },
+      "limits": { "rpm": 30, "rpd": 1000, "scope": "model" },
+      "models": [
+        { "id": "openai/gpt-oss-120b", "context": 131072, "tier": "strong" },
+        { "id": "qwen/qwen3.8-27b", "context": 131072, "tier": "good" },
+        { "id": "openai/gpt-oss-20b", "context": 131072, "tier": "good" }
+      ],
+      "notes": "Very fast inference.",
+      "verified": "2026-10-07 from public docs, not yet live-probed"
+    },
+    {
+      "id": "kilo",
+      "name": "Kilo Code gateway",
+      "baseUrl": "https://api.kilo.ai/api/gateway",
+      "auth": { "required": false },
+      "limits": { "rph": 200, "scope": "ip" },
+      "models": [
+        { "id": "kilo-auto/free", "context": 128000, "tier": "good" }
+      ],
+      "notes": "No key needed. The free model pool rotates often. May log prompts.",
+      "mayLogPrompts": true,
+      "verified": "2026-10-07 live: answered via kilo-auto/free; sometimes returns 200 with an error body when its upstream is overloaded"
+    },
+    {
+      "id": "ovhcloud",
+      "name": "OVHcloud AI Endpoints",
+      "baseUrl": "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1",
+      "auth": { "required": false, "env": "OVH_AI_ENDPOINTS_ACCESS_TOKEN" },
+      "limits": { "rpm": 2, "scope": "model" },
+      "models": [
+        { "id": "gpt-oss-120b", "context": 131072, "tier": "strong" },
+        { "id": "Meta-Llama-3_3-70B-Instruct", "context": 131072, "tier": "good" }
+      ],
+      "notes": "No key needed (2 requests/minute per IP per model). EU-hosted. Last-resort fallback.",
+      "verified": "2026-10-07 live: gpt-oss-120b reachable but rate limited without a key; Llama id corrected from the OVHcloud catalog"
+    }
+  ]
+}

@@ -107,16 +107,25 @@ export class Router {
         continue;
       }
 
-      const ms = this.now() - started;
-      if (res.ok) {
-        this.log(`  ✓ ${target.id} ${res.status} ${ms}ms`);
-        return { response: res, target, attempts };
+      // Some providers answer 200 with an error in the body (e.g. "upstream
+      // overloaded"), so a 200 only counts once the body looks like an answer.
+      let outcome;
+      try {
+        outcome = res.ok ? await inspectBody(res) : { status: res.status, error: await readSnippet(res) };
+      } catch (err) {
+        if (signal?.aborted) throw err;
+        outcome = { status: 502, error: `broken response: ${err.message}` };
       }
 
-      const detail = await readSnippet(res);
-      attempts.push({ target: target.id, status: res.status, error: detail });
-      this.log(`  ✗ ${target.id} ${res.status} ${ms}ms ${detail}`);
-      this.onFailure(target, res);
+      const ms = this.now() - started;
+      if (outcome.response) {
+        this.log(`  ✓ ${target.id} ${res.status} ${ms}ms`);
+        return { response: outcome.response, target, attempts };
+      }
+
+      attempts.push({ target: target.id, status: outcome.status, error: outcome.error });
+      this.log(`  ✗ ${target.id} ${outcome.status} ${ms}ms ${outcome.error}`);
+      this.onFailure(target, outcome.status, res.headers);
     }
 
     throw new AllProvidersFailed(attempts, Number.isFinite(soonest) ? soonest : null);
@@ -148,9 +157,8 @@ export class Router {
     }
   }
 
-  onFailure(target, res) {
-    const retryAfter = parseRetryAfter(res.headers.get('retry-after'), this.now());
-    const s = res.status;
+  onFailure(target, s, headers) {
+    const retryAfter = parseRetryAfter(headers.get('retry-after'), this.now());
     if (s === 429) {
       this.bench(this.limitBucket(target), retryAfter ?? COOLDOWN.rateLimited, 'rate limited');
     } else if (s === 401 || s === 403) {
@@ -214,6 +222,65 @@ export function parseRetryAfter(value, now) {
   if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
   const date = Date.parse(value);
   return Number.isNaN(date) ? null : Math.max(0, date - now);
+}
+
+/**
+ * Checks a 200 response for an error hidden in the body. Returns
+ * { response } with an equivalent, still-unread Response when it looks like a
+ * real answer, or { status, error } when it doesn't. For streams only the
+ * first chunk is examined; once a stream has started it is passed through.
+ */
+async function inspectBody(res) {
+  const init = { status: res.status, headers: res.headers };
+  if (!(res.headers.get('content-type') || '').includes('text/event-stream')) {
+    const text = await res.text();
+    let json;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      return { status: 502, error: 'provider sent a response that is not JSON' };
+    }
+    return errorIn(json) || { response: new Response(text, init) };
+  }
+
+  const reader = res.body.getReader();
+  const first = await reader.read();
+  if (first.done) return { status: 502, error: 'provider sent an empty stream' };
+  const dataLine = new TextDecoder().decode(first.value).split('\n').find((l) => l.startsWith('data:'));
+  try {
+    const failure = errorIn(JSON.parse(dataLine.slice(5)));
+    if (failure) {
+      reader.cancel().catch(() => {});
+      return failure;
+    }
+  } catch {
+    // No complete JSON event in the first chunk: nothing to judge yet.
+  }
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(first.value);
+    },
+    async pull(controller) {
+      const { done, value } = await reader.read();
+      if (done) controller.close();
+      else controller.enqueue(value);
+    },
+    cancel(reason) {
+      return reader.cancel(reason);
+    },
+  });
+  return { response: new Response(stream, init) };
+}
+
+function errorIn(json) {
+  if (json?.error) {
+    const e = json.error;
+    const code = Number(typeof e === 'object' ? e.code ?? e.status : json.code);
+    const message = typeof e === 'object' ? e.message || JSON.stringify(e) : String(e);
+    return { status: code >= 400 && code <= 599 ? code : 502, error: message.replace(/\s+/g, ' ').slice(0, 200) };
+  }
+  if (!Array.isArray(json?.choices)) return { status: 502, error: 'provider response had no choices' };
+  return null;
 }
 
 async function readSnippet(res) {

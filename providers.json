@@ -48,7 +48,7 @@
       ],
       "notes": "No key needed. The free model pool rotates often. May log prompts.",
       "mayLogPrompts": true,
-      "verified": "2026-10-07 from public docs, not yet live-probed"
+      "verified": "2026-10-07 live: answered via kilo-auto/free; sometimes returns 200 with an error body when its upstream is overloaded"
     },
     {
       "id": "ovhcloud",
@@ -58,10 +58,10 @@
       "limits": { "rpm": 2, "scope": "model" },
       "models": [
         { "id": "gpt-oss-120b", "context": 131072, "tier": "strong" },
-        { "id": "Meta-Llama-3.3-70B-Instruct", "context": 131072, "tier": "good" }
+        { "id": "Meta-Llama-3_3-70B-Instruct", "context": 131072, "tier": "good" }
       ],
       "notes": "No key needed (2 requests/minute per IP per model). EU-hosted. Last-resort fallback.",
-      "verified": "2026-10-07 from public docs, not yet live-probed"
+      "verified": "2026-10-07 live: gpt-oss-120b reachable but rate limited without a key; Llama id corrected from the OVHcloud catalog"
     }
   ]
 }

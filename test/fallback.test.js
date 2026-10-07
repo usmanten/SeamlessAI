@@ -24,6 +24,13 @@ async function fakeProvider(behavior) {
       res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'hel' } }] })}\n\n`);
       res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'lo' } }] })}\n\n`);
       res.end('data: [DONE]\n\n');
+    } else if (b === 'ok-but-error') {
+      // What Kilo sends when the model behind it is overloaded.
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: { message: 'Upstream error from Nvidia: Service temporarily overloaded', code: 503 } }));
+    } else if (b === 'stream-error') {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.end(`data: ${JSON.stringify({ error: { message: 'rate limited upstream', code: 429 } })}\n\n`);
     } else if (b === 'hang') {
       // never answers
     } else {
@@ -101,6 +108,34 @@ test('falls back when a provider times out', async () => {
   const { target, attempts } = await router.dispatch(chat());
   assert.equal(target.provider.id, 'ok');
   assert.equal(attempts[0].error, 'timed out');
+});
+
+test('a 200 with an error in the body counts as a failure and falls back', async () => {
+  const sneaky = await fakeProvider('ok-but-error');
+  const ok = await fakeProvider('ok');
+  const router = new Router({ catalog: catalogFor(['sneaky', sneaky], ['ok', ok]), config: { keys: {} } });
+  const { target, attempts, response } = await router.dispatch(chat());
+  assert.equal(target.provider.id, 'ok');
+  assert.equal(attempts[0].status, 503);
+  assert.match(attempts[0].error, /overloaded/);
+  assert.equal((await response.json()).choices[0].message.content, 'hi from ok-model', 'inspected body is still readable');
+
+  // Benched like any other 503, so the next request skips it.
+  await router.dispatch(chat());
+  assert.equal(sneaky.requests.length, 1);
+});
+
+test('a stream whose first event is an error falls back; a good stream passes through intact', async () => {
+  const bad = await fakeProvider('stream-error');
+  const good = await fakeProvider('stream');
+  const router = new Router({ catalog: catalogFor(['bad', bad], ['good', good]), config: { keys: {} } });
+  const { target, attempts, response } = await router.dispatch(chat('auto', { stream: true }));
+  assert.equal(target.provider.id, 'good');
+  assert.equal(attempts[0].status, 429);
+  const text = await response.text();
+  assert.match(text, /"hel"/);
+  assert.match(text, /"lo"/);
+  assert.match(text, /\[DONE\]/);
 });
 
 test('a 400 moves on without benching the provider', async () => {

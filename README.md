@@ -82,3 +82,7 @@ Free tiers change often. Use your own accounts and keys; don't share or pool key
 ```sh
 npm test   # runs against fake local providers, no network needed
 ```
+
+## License
+
+SeamlessAI is free software under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0-only). You can use, change, and share it; if you share a changed version, or run one as a service other people use over a network, you must make your source code available under the same license.

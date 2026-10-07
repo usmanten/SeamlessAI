@@ -22,7 +22,7 @@ Two providers (Kilo Code gateway and OVHcloud) work with no key, so `seamless st
 ```sh
 seamless keys set nvidia   <key>   # https://build.nvidia.com
 seamless keys set groq     <key>   # https://console.groq.com/keys
-seamless keys set cerebras <key>   # https://cloud.cerebras.ai
+seamless keys set cerebras <key>   # optional: a trial that asks for a card
 ```
 
 Keys are stored in `~/.seamless/config.json` (readable only by you). Environment variables `NVIDIA_API_KEY`, `GROQ_API_KEY` and `CEREBRAS_API_KEY` take precedence. Keys are only ever sent over https.
@@ -104,7 +104,7 @@ The provider list lives in [`providers.json`](providers.json): base URL, whether
 |----------|-----|------------|-------|
 | NVIDIA NIM | free, needs signup | 40 RPM, 10,000/day per model | Strongest free coding models (Kimi K3, GLM 5.3, DeepSeek V4.1). NVIDIA says free access is for prototyping, development and testing |
 | Groq | free | 30 RPM, 1,000/day, 8,000 tokens/min per model | Very fast; too small for big agent requests |
-| Cerebras | free | 5 RPM, 30,000 tokens/min, 1M tokens/day per model | Fast |
+| Cerebras | trial, asks for a card | 5 RPM, 30,000 tokens/min, 1M tokens/day per model | Fast; optional |
 | Kilo Code gateway | none | 200/hour per IP | Free pool rotates; may log prompts |
 | OVHcloud AI Endpoints | none | 2 RPM per IP per model | EU-hosted; last resort |
 

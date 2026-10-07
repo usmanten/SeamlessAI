@@ -55,12 +55,12 @@
         "signupUrl": "https://cloud.cerebras.ai"
       },
       "limits": { "rpm": 5, "tpm": 30000, "tpd": 1000000, "scope": "model" },
-      "stability": "permanent",
+      "stability": "trial",
       "models": [
         { "id": "gpt-oss-120b", "tier": "strong", "tools": true },
         { "id": "qwen-3.8-27b", "tier": "good" }
       ],
-      "notes": "Fast, with 1M free tokens a day per model.",
+      "notes": "Fast, with 1M tokens a day per model, but Cerebras calls this a free trial and asks for a payment method at signup. Optional.",
       "verified": "2026-10-07 limits from inference-docs.cerebras.ai/support/rate-limits, not yet live-probed"
     },
     {

@@ -1,4 +1,5 @@
 import { keyFor, isUsable } from './config.js';
+import { trimToFit, describeTrim } from './trim.js';
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -10,6 +11,13 @@ export const DEFAULT_WEIGHTS = { quality: 0.4, reliability: 0.25, speed: 0.15, h
 const QUALITY_BY_TIER = { strong: 80, good: 60 };
 const STABILITY = { permanent: 100, promo: 50, trial: 50, new: 30 };
 const STATS_WINDOW = 20; // live outcomes and latencies kept per model
+// In "auto" trim mode (the default): when a model that can take the whole
+// conversation is back within this long, wait for it (429 with retry-after)
+// rather than trim for another. `seamless trim auto <seconds>` changes it.
+const DEFAULT_TRIM_WAIT_SECONDS = 60;
+// A provider said a request was too big although our estimate said it fit:
+// aim this far under the smaller of the two.
+const TOO_BIG_MARGIN = 0.75;
 
 // How long to bench a provider or model after each kind of failure, when the
 // upstream does not say (retry-after wins when present).
@@ -147,69 +155,138 @@ export class Router {
   /**
    * Sends an OpenAI chat-completions body through the fallback chain. Resolves
    * with the first successful upstream Response; the caller streams its body.
+   *
+   * Long conversations are handled in two steps, moving on only when it has
+   * to: first the whole conversation goes to the best model with room for it;
+   * if none can take it, it is trimmed (see trim.js) for the model that needs
+   * the least cut, and the result says what was trimmed.
    */
   async dispatch(body, { signal } = {}) {
-    const attempts = [];
-    let soonest = Infinity;
+    const run = { attempts: [], soonest: Infinity, signal };
     const need = requestNeeds(body);
+    const tooBig = []; // { target, limit }: could take a trimmed version
+    let fullFitSoonest = Infinity;
 
     for (const target of this.plan(body.model)) {
       const unfit = this.unfitFor(target, need);
       if (unfit) {
-        attempts.push({ target: target.id, skipped: unfit });
+        run.attempts.push({ target: target.id, skipped: unfit });
+        // Unfit only because of its size: a trimmed version might do.
+        if (!this.unfitFor(target, { ...need, tokens: 0 })) tooBig.push({ target, limit: this.sizeLimit(target) });
         continue;
       }
-      const blocked = this.blockedFor(target, need);
-      if (blocked) {
-        soonest = Math.min(soonest, blocked.ms);
-        attempts.push({ target: target.id, skipped: blocked.reason });
-        continue;
+      const result = await this.attempt(target, body, need, run);
+      if (result.response) return { response: result.response, target, attempts: run.attempts };
+      if (result.blocked) fullFitSoonest = Math.min(fullFitSoonest, result.blocked.ms);
+      if (result.tooBig) {
+        const limit = Math.min(this.sizeLimit(target) ?? Infinity, result.statedLimit ?? Infinity, need.tokens);
+        tooBig.push({ target, limit: Math.floor(limit * TOO_BIG_MARGIN) });
       }
-
-      const started = this.now();
-      this.recordUse(target, need.tokens);
-      let res;
-      try {
-        res = await this.send(target, body, signal);
-      } catch (err) {
-        if (signal?.aborted) throw err;
-        const timedOut = err.name === 'TimeoutError';
-        const reason = timedOut ? 'timed out' : `network error: ${err.message}`;
-        // A slow model says nothing about the provider's other models; a
-        // network failure usually does.
-        this.bench(timedOut ? target.id : this.providerBucket(target), COOLDOWN.network, reason);
-        this.recordOutcome(target, false);
-        attempts.push({ target: target.id, error: reason });
-        this.log(`  ✗ ${target.id} ${reason}`);
-        continue;
-      }
-
-      // Some providers answer 200 with an error in the body (e.g. "upstream
-      // overloaded"), so a 200 only counts once the body looks like an answer.
-      let outcome;
-      try {
-        outcome = res.ok ? await inspectBody(res) : { status: res.status, error: await readSnippet(res) };
-      } catch (err) {
-        if (signal?.aborted) throw err;
-        outcome = { status: 502, error: `broken response: ${err.message}` };
-      }
-
-      const ms = this.now() - started;
-      if (outcome.response) {
-        this.recordOutcome(target, true, ms);
-        this.log(`  ✓ ${target.id} ${res.status} ${ms}ms`);
-        return { response: outcome.response, target, attempts };
-      }
-
-      attempts.push({ target: target.id, status: outcome.status, error: outcome.error });
-      this.log(`  ✗ ${target.id} ${outcome.status} ${ms}ms ${outcome.error}`);
-      this.onFailure(target, outcome.status, res.headers);
-      // Rate limits, key problems and other 4xx say nothing about whether the
-      // model works, so only outages and broken answers count against it.
-      if (outcome.status >= 500 || outcome.status === 404) this.recordOutcome(target, false);
     }
 
-    throw new AllProvidersFailed(attempts, Number.isFinite(soonest) ? soonest : null);
+    // Nothing took the whole conversation. Trimming loses some of it, so the
+    // user's trim setting decides whether to wait for a model with room.
+    const declined = tooBig.length ? this.trimDeclined(fullFitSoonest) : null;
+    if (declined) run.attempts.push({ target: 'seamless', skipped: declined });
+    else if (tooBig.length) {
+      // Most room first: it needs the least cut. Ties keep the ranking.
+      tooBig.sort((a, b) => b.limit - a.limit);
+      for (const { target, limit } of tooBig) {
+        const trimmed = trimToFit(body, limit, (b) => requestNeeds(b).tokens);
+        if (!trimmed) {
+          run.attempts.push({ target: target.id, skipped: 'still too big after trimming everything that may be trimmed' });
+          continue;
+        }
+        const summary = describeTrim(trimmed.report);
+        const result = await this.attempt(target, trimmed.body, requestNeeds(trimmed.body), run);
+        if (result.response) {
+          this.log(`  ✂ trimmed for ${target.id}: ${summary}`);
+          return { response: result.response, target, attempts: run.attempts, trimmed: { ...trimmed.report, summary } };
+        }
+      }
+    }
+
+    throw new AllProvidersFailed(run.attempts, Number.isFinite(run.soonest) ? run.soonest : null);
+  }
+
+  /**
+   * Why trimming is off the table for this request, or null to go ahead.
+   * Modes: "auto" waits for a model with room if it is back within
+   * trimWaitSeconds; "wait" always waits for one; "off" never trims.
+   */
+  trimDeclined(fullFitSoonest) {
+    const mode = this.config.trim ?? 'auto';
+    if (mode === 'off') return 'not trimming the conversation (trimming is off: `seamless trim auto` turns it on)';
+    if (!Number.isFinite(fullFitSoonest)) return null;
+    const waitMs = 1000 * (this.config.trimWaitSeconds ?? DEFAULT_TRIM_WAIT_SECONDS);
+    if (mode === 'wait' || fullFitSoonest <= waitMs) {
+      return `not trimming: a model with room for the whole conversation is back in ${Math.ceil(fullFitSoonest / 1000)}s`;
+    }
+    return null;
+  }
+
+  /** The most tokens a target takes in one request, or null if unknown. */
+  sizeLimit(target) {
+    const caps = [target.model.context, limitsOf(target).tpm].filter(Boolean);
+    return caps.length ? Math.min(...caps) : null;
+  }
+
+  /**
+   * Tries one target. Returns { response } on success, { blocked } if it
+   * can't be used right now, { tooBig, statedLimit } if it refused the
+   * request as too big (with the limit it gave, if any), or {} otherwise.
+   */
+  async attempt(target, body, need, run) {
+    const { attempts, signal } = run;
+    const blocked = this.blockedFor(target, need);
+    if (blocked) {
+      run.soonest = Math.min(run.soonest, blocked.ms);
+      attempts.push({ target: target.id, skipped: blocked.reason });
+      return { blocked };
+    }
+
+    const started = this.now();
+    this.recordUse(target, need.tokens);
+    let res;
+    try {
+      res = await this.send(target, body, signal);
+    } catch (err) {
+      if (signal?.aborted) throw err;
+      const timedOut = err.name === 'TimeoutError';
+      const reason = timedOut ? 'timed out' : `network error: ${err.message}`;
+      // A slow model says nothing about the provider's other models; a
+      // network failure usually does.
+      this.bench(timedOut ? target.id : this.providerBucket(target), COOLDOWN.network, reason);
+      this.recordOutcome(target, false);
+      attempts.push({ target: target.id, error: reason });
+      this.log(`  ✗ ${target.id} ${reason}`);
+      return {};
+    }
+
+    // Some providers answer 200 with an error in the body (e.g. "upstream
+    // overloaded"), so a 200 only counts once the body looks like an answer.
+    let outcome;
+    try {
+      outcome = res.ok ? await inspectBody(res) : { status: res.status, error: await readSnippet(res) };
+    } catch (err) {
+      if (signal?.aborted) throw err;
+      outcome = { status: 502, error: `broken response: ${err.message}` };
+    }
+
+    const ms = this.now() - started;
+    if (outcome.response) {
+      this.recordOutcome(target, true, ms);
+      this.log(`  ✓ ${target.id} ${res.status} ${ms}ms`);
+      return { response: outcome.response };
+    }
+
+    attempts.push({ target: target.id, status: outcome.status, error: outcome.error });
+    this.log(`  ✗ ${target.id} ${outcome.status} ${ms}ms ${outcome.error}`);
+    this.onFailure(target, outcome.status, res.headers);
+    // Rate limits, key problems and other 4xx say nothing about whether the
+    // model works, so only outages and broken answers count against it.
+    if (outcome.status >= 500 || outcome.status === 404) this.recordOutcome(target, false);
+    return saysTooBig(outcome) ? { tooBig: true, statedLimit: statedLimit(outcome.error) } : {};
   }
 
   async send(target, body, signal) {
@@ -428,6 +505,22 @@ async function inspectBody(res) {
     },
   });
   return { response: new Response(stream, init) };
+}
+
+/** Whether a provider refused a request for being too long for the model. */
+export function saysTooBig({ status, error = '' }) {
+  if (status === 413) return true;
+  return status === 400 && /context|too (long|large)|maximum.*tokens|reduce the length|token limit/i.test(error);
+}
+
+/**
+ * The token limit a "too big" error mentions ("maximum context length is
+ * 4096 tokens", "Limit 8000, Requested 9500"): its smallest number of 1000
+ * or more, or null.
+ */
+export function statedLimit(error = '') {
+  const numbers = (error.match(/\d[\d,]*/g) || []).map((n) => Number(n.replace(/,/g, ''))).filter((n) => n >= 1000);
+  return numbers.length ? Math.min(...numbers) : null;
 }
 
 export function errorIn(json) {

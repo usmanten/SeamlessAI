@@ -72,13 +72,17 @@ async function chatCompletions(router, req, res, log) {
     return sendError(res, 429, message, 'all_providers_exhausted', headers);
   }
 
-  const { response, target } = result;
-  res.writeHead(response.status, {
+  const { response, target, trimmed } = result;
+  const headers = {
     'content-type': response.headers.get('content-type') || 'application/json',
     'cache-control': 'no-cache',
     'x-seamless-provider': target.provider.id,
     'x-seamless-model': target.model.id,
-  });
+  };
+  // The conversation didn't fit any model whole: say what was cut (the
+  // router has already logged it).
+  if (trimmed) headers['x-seamless-trimmed'] = trimmed.summary;
+  res.writeHead(response.status, headers);
   if (!response.body) return res.end();
   Readable.fromWeb(response.body)
     .on('error', (err) => {

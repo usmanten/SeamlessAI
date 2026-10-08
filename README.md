@@ -80,6 +80,20 @@ seamless test groq/openai/gpt-oss-120b --only tool-call,basic
 
 Five short tests, each sending a made-up prompt (never your code): follow a simple instruction, call a tool with valid arguments, use tool results over several rounds, fix a one-line bug, and find a detail in a ~4,000-token log. Answers are checked with plain text and JSON checks; nothing a model writes is ever run. Scores are saved to `~/.seamless/probes.json` and used by `seamless start`. Testing uses your free quota (about 7 requests per model) and waits out short rate limits. Tests that hit a rate limit are skipped rather than failed, and a model needs at least 3 tests to get a score.
 
+## Long conversations
+
+Coding tools resend the whole conversation with every request, so switching models mid-conversation keeps your context, as long as the conversation fits the next model. SeamlessAI handles that in two steps and only takes the second when it has to:
+
+1. **Fit.** Models too small for the whole conversation (their context, or a tokens-per-minute limit like Groq's 8,000) are skipped, so it goes whole to the best-ranked model with room for it. If a model with room is only briefly rate limited (back within a minute), SeamlessAI answers 429 with `retry-after` so your tool waits for it rather than losing anything.
+2. **Trim.** If no model can take it whole, SeamlessAI trims a copy for the model with the most room, cutting in this order and stopping as soon as it fits:
+   1. old command and tool output (the first 200 characters are kept so the model knows what it was),
+   2. old file contents: code blocks pasted into messages, and files the model wrote out through a tool,
+   3. the oldest whole turns, with a note telling the model that earlier messages were removed.
+
+   System instructions, your latest request and the last 6 messages are never cut. If those alone don't fit, that model is skipped. A provider that refuses a request as too long also gets one trimmed retry.
+
+Trimming is always announced: the server log shows a `✂ trimmed for ...` line and the response carries an `x-seamless-trimmed` header, for example `3 old tool outputs shortened (~140000 -> ~120000 tokens)`. Your tool still has the full conversation; only what was sent to that one model was shortened. SeamlessAI stores no conversations.
+
 ## How fallback works
 
 For each request the router walks the ranked list and skips anything that is benched or at its published limit:

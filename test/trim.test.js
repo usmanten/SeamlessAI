@@ -154,7 +154,7 @@ test('step 2: when no model can take it whole, it is trimmed for the one with mo
   }
 });
 
-test('waits for a model with room that is back within a minute instead of trimming', async () => {
+test('by default waits for a model with room that is back within a minute instead of trimming', async () => {
   const roomy = await model(() => ({ status: 429 }));
   const small = await model();
   let clock = 1_000_000;
@@ -182,4 +182,35 @@ test('a provider that says the conversation is too long gets a trimmed retry', a
   assert.equal(attempts[0].status, 400);
   assert.equal(picky.requests.length, 2);
   assert.ok(trimmed.after < trimmed.before);
+});
+
+test('the trim setting decides between waiting and trimming', async () => {
+  const roomy = await model();
+  const small = await model();
+  const config = { keys: {} };
+  const router = new Router({
+    catalog: catalogOf(['roomy', roomy], ['small', small, { limits: { tpm: 3000 } }]),
+    config,
+  });
+  const outFor = (ms) => router.bench('roomy', ms, 'rate limited');
+
+  // auto with a longer wait: 5 minutes away is close enough to wait for.
+  Object.assign(config, { trim: 'auto', trimWaitSeconds: 600 });
+  outFor(5 * 60_000);
+  await assert.rejects(router.dispatch(session(4)), (err) => err.attempts.some((a) => /not trimming: a model with room .* back in 300s/.test(a.skipped)));
+
+  // wait: never trims while a model with room is coming back, however long.
+  Object.assign(config, { trim: 'wait' });
+  outFor(60 * 60_000);
+  await assert.rejects(router.dispatch(session(4)), AllProvidersFailed);
+  assert.equal(small.requests.length, 0);
+
+  // off: never trims, even when no model could ever take it whole.
+  const offRouter = new Router({ catalog: catalogOf(['small', small, { limits: { tpm: 3000 } }]), config: { keys: {}, trim: 'off' } });
+  await assert.rejects(offRouter.dispatch(session(4)), (err) => err.attempts.some((a) => /trimming is off/.test(a.skipped)));
+  assert.equal(small.requests.length, 0);
+
+  // wait still trims when no model could ever take it whole.
+  const waitRouter = new Router({ catalog: catalogOf(['small', small, { limits: { tpm: 3000 } }]), config: { keys: {}, trim: 'wait' } });
+  assert.ok((await waitRouter.dispatch(session(4))).trimmed);
 });

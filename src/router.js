@@ -11,9 +11,10 @@ export const DEFAULT_WEIGHTS = { quality: 0.4, reliability: 0.25, speed: 0.15, h
 const QUALITY_BY_TIER = { strong: 80, good: 60 };
 const STABILITY = { permanent: 100, promo: 50, trial: 50, new: 30 };
 const STATS_WINDOW = 20; // live outcomes and latencies kept per model
-// When a model that can take the whole conversation is back within this
-// long, wait for it (429 with retry-after) rather than trim for another.
-const WAIT_FOR_FULL_FIT_MS = MINUTE;
+// In "auto" trim mode (the default): when a model that can take the whole
+// conversation is back within this long, wait for it (429 with retry-after)
+// rather than trim for another. `seamless trim auto <seconds>` changes it.
+const DEFAULT_TRIM_WAIT_SECONDS = 60;
 // A provider said a request was too big although our estimate said it fit:
 // aim this far under the smaller of the two.
 const TOO_BIG_MARGIN = 0.75;
@@ -183,9 +184,11 @@ export class Router {
       }
     }
 
-    // Nothing took the whole conversation. Trimming loses some of it, so if
-    // a model with room is back soon, wait for that instead.
-    if (tooBig.length && fullFitSoonest > WAIT_FOR_FULL_FIT_MS) {
+    // Nothing took the whole conversation. Trimming loses some of it, so the
+    // user's trim setting decides whether to wait for a model with room.
+    const declined = tooBig.length ? this.trimDeclined(fullFitSoonest) : null;
+    if (declined) run.attempts.push({ target: 'seamless', skipped: declined });
+    else if (tooBig.length) {
       // Most room first: it needs the least cut. Ties keep the ranking.
       tooBig.sort((a, b) => b.limit - a.limit);
       for (const { target, limit } of tooBig) {
@@ -204,6 +207,22 @@ export class Router {
     }
 
     throw new AllProvidersFailed(run.attempts, Number.isFinite(run.soonest) ? run.soonest : null);
+  }
+
+  /**
+   * Why trimming is off the table for this request, or null to go ahead.
+   * Modes: "auto" waits for a model with room if it is back within
+   * trimWaitSeconds; "wait" always waits for one; "off" never trims.
+   */
+  trimDeclined(fullFitSoonest) {
+    const mode = this.config.trim ?? 'auto';
+    if (mode === 'off') return 'not trimming the conversation (trimming is off: `seamless trim auto` turns it on)';
+    if (!Number.isFinite(fullFitSoonest)) return null;
+    const waitMs = 1000 * (this.config.trimWaitSeconds ?? DEFAULT_TRIM_WAIT_SECONDS);
+    if (mode === 'wait' || fullFitSoonest <= waitMs) {
+      return `not trimming: a model with room for the whole conversation is back in ${Math.ceil(fullFitSoonest / 1000)}s`;
+    }
+    return null;
   }
 
   /** The most tokens a target takes in one request, or null if unknown. */

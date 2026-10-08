@@ -84,13 +84,23 @@ Five short tests, each sending a made-up prompt (never your code): follow a simp
 
 Coding tools resend the whole conversation with every request, so switching models mid-conversation keeps your context, as long as the conversation fits the next model. SeamlessAI handles that in two steps and only takes the second when it has to:
 
-1. **Fit.** Models too small for the whole conversation (their context, or a tokens-per-minute limit like Groq's 8,000) are skipped, so it goes whole to the best-ranked model with room for it. If a model with room is only briefly rate limited (back within a minute), SeamlessAI answers 429 with `retry-after` so your tool waits for it rather than losing anything.
+1. **Fit.** Models too small for the whole conversation (their context, or a tokens-per-minute limit like Groq's 8,000) are skipped, so it goes whole to the best-ranked model with room for it. If a model with room is only briefly rate limited, SeamlessAI may answer 429 with `retry-after` so your tool waits for it rather than losing anything (see the trim setting below).
 2. **Trim.** If no model can take it whole, SeamlessAI trims a copy for the model with the most room, cutting in this order and stopping as soon as it fits:
    1. old command and tool output (the first 200 characters are kept so the model knows what it was),
    2. old file contents: code blocks pasted into messages, and files the model wrote out through a tool,
    3. the oldest whole turns, with a note telling the model that earlier messages were removed.
 
    System instructions, your latest request and the last 6 messages are never cut. If those alone don't fit, that model is skipped. A provider that refuses a request as too long also gets one trimmed retry.
+
+You choose what happens when the only models with room are rate limited:
+
+```sh
+seamless trim             # show the current setting
+seamless trim auto        # default: wait if a model with room is back within 60s, else trim
+seamless trim auto 300    # same, but wait up to 5 minutes
+seamless trim wait        # always wait for a model with room; trim only if none could ever fit
+seamless trim off         # never trim; too-big requests fail instead
+```
 
 Trimming is always announced: the server log shows a `✂ trimmed for ...` line and the response carries an `x-seamless-trimmed` header, for example `3 old tool outputs shortened (~140000 -> ~120000 tokens)`. Your tool still has the full conversation; only what was sent to that one model was shortened. SeamlessAI stores no conversations.
 

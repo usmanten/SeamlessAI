@@ -64,7 +64,7 @@ claude
 The base URL has no `/v1` (Claude Code adds it). The token can be anything. No Claude account or credits are used.
 
 What to expect:
-- Claude's model names (`claude-sonnet-...`, `claude-haiku-...`) mean `auto`. To prefer a provider or model, set `ANTHROPIC_MODEL`, e.g. `ANTHROPIC_MODEL=nvidia/z-ai/glm-5.3`.
+- Claude's model names (`claude-sonnet-...`, `claude-haiku-...`) mean `auto`. To prefer a provider or model, set `ANTHROPIC_MODEL`, e.g. `ANTHROPIC_MODEL=nvidia/z-ai/glm-5.3`. Claude Code warns once that it doesn't recognize that name; the warning is harmless.
 - Claude Code works by calling tools, so its requests only go to models marked `"tools": true` in the catalog (ones that passed `seamless test`'s tool checks). Other models are skipped for these requests.
 - Every Claude Code request carries about 20,000 tokens of instructions and tool descriptions. Groq's free tier allows 8,000 tokens a minute, so these requests go to NVIDIA and Kilo instead. An NVIDIA key makes Claude Code much more dependable.
 - Not passed on: Anthropic's built-in web search (it only runs on Anthropic's servers), PDFs, images inside tool results, and Claude's extended thinking. The free model's own reasoning is not shown.

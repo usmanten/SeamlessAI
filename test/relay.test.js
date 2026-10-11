@@ -143,7 +143,9 @@ test('the watcher spots a used-up plan in this folder only', () => {
   fs.writeFileSync(file, jsonl(...claudeEntries('s1')));
   const watcher = new SessionWatcher('claude', { cwd: project, since });
   assert.deepEqual(watcher.poll(), { sessionId: 's1', file, outOfUsage: null });
-  // A brief rate limit (no plan limits attached) is not "out of usage".
+  // Neither an overloaded server nor a brief rate limit (no plan limits attached) is "out of usage".
+  fs.appendFileSync(file, jsonl({ type: 'system', subtype: 'api_error', cwd: project, sessionId: 's1', timestamp: NOW, error: { status: 529 } }));
+  assert.equal(watcher.poll().outOfUsage, null);
   fs.appendFileSync(file, jsonl({ type: 'system', subtype: 'api_error', cwd: project, sessionId: 's1', timestamp: NOW, error: { status: 429 } }));
   assert.equal(watcher.poll().outOfUsage, null);
   fs.appendFileSync(file, jsonl(claudeLimit('s1')));

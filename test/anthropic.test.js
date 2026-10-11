@@ -11,14 +11,17 @@ after(() => open.forEach((c) => c.close()));
 
 
 /** A provider that streams the given OpenAI chunks as server-sent events. */
-async function streamingModel(chunks) {
+async function streamingModel(chunks, { delayMs = 0 } = {}) {
   const state = { requests: [] };
   const server = http.createServer(async (req, res) => {
     let raw = '';
     for await (const c of req) raw += c;
     state.requests.push(JSON.parse(raw));
     res.writeHead(200, { 'content-type': 'text/event-stream' });
-    for (const c of chunks) res.write(`data: ${JSON.stringify(c)}\n\n`);
+    for (const c of chunks) {
+      res.write(`data: ${JSON.stringify(c)}\n\n`);
+      if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
+    }
     res.end('data: [DONE]\n\n');
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -127,6 +130,25 @@ test('a streamed answer becomes Anthropic events, with tool calls sent whole', a
   assert.deepEqual(events[8].usage, { input_tokens: 1200, output_tokens: 30 });
   assert.equal(up.requests[0].stream, true);
   assert.deepEqual(up.requests[0].stream_options, { include_usage: true });
+});
+
+test('a stream keeps going through chunks that carry nothing to send (reasoning, partial tool calls)', async () => {
+  const up = await streamingModel(
+    [
+      { choices: [{ index: 0, delta: { role: 'assistant', reasoning_content: 'Thinking' } }] },
+      { choices: [{ index: 0, delta: { reasoning_content: ' more' } }] },
+      { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_1', function: { name: 'Read', arguments: '{"path":' } }] } }] },
+      { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: '"a.js"}' } }] } }] },
+      { choices: [{ index: 0, delta: { reasoning_content: ' done' } }] },
+      { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] },
+    ],
+    { delayMs: 20 },
+  );
+  const base = await serve(['kilo', up, {}, { tools: true }]);
+  const res = await post(base, '/v1/messages', { model: 'claude-sonnet-4-5', max_tokens: 100, stream: true, tools: TOOLS, messages: [{ role: 'user', content: 'read a.js' }] });
+  const events = sse(await res.text());
+  assert.equal(events.at(-1).type, 'message_stop');
+  assert.deepEqual(JSON.parse(events.find((e) => e.delta?.type === 'input_json_delta').delta.partial_json), { path: 'a.js' });
 });
 
 test('a provider that ignores the stream flag still gives a streamed answer', async () => {

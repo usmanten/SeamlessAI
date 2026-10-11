@@ -161,10 +161,14 @@ export function streamToAnthropic(body, { model, isJson = false, inputTokens = 0
   let finish = null;
   const calls = []; // by OpenAI tool-call index: { id, name, args }
   const usage = { input_tokens: inputTokens, output_tokens: 0 };
+  let events = 0; // sent so far
 
   return new ReadableStream({
     async pull(controller) {
-      const send = (type, data) => controller.enqueue(encoder.encode(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`));
+      const send = (type, data) => {
+        events++;
+        controller.enqueue(encoder.encode(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`));
+      };
       const start = () => {
         if (started) return;
         started = true;
@@ -231,24 +235,26 @@ export function streamToAnthropic(body, { model, isJson = false, inputTokens = 0
           take(JSON.parse(raw));
           return end();
         }
-        // Read until at least one event can be sent (or the stream ends).
+        // Read until at least one event has been sent (or the stream ends):
+        // a pull that sends nothing is never repeated, which would stall the
+        // answer. Reasoning-only chunks, for example, send nothing.
+        const before = events;
         for (;;) {
           const { done, value } = await reader.read();
           if (done) return end();
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split('\n');
           buffer = lines.pop();
-          let sent = false;
           for (const line of lines) {
             if (!line.startsWith('data:')) continue;
             const data = line.slice(5).trim();
             if (data === '[DONE]') return end();
             try {
               take(JSON.parse(data));
-              sent = true;
+              start();
             } catch {}
           }
-          if (sent) return start();
+          if (events > before) return;
         }
       } catch (err) {
         if (finished) return;

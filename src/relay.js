@@ -26,6 +26,8 @@ export const STEPS = {
  */
 export const FREE_MODES = { edits: 'acceptEdits', ask: 'manual', auto: 'auto' };
 export const DEFAULT_FREE_MODE = 'edits';
+// Commands that only look and never change anything run without asking in edits and ask modes.
+const READ_ONLY = ['Bash(git status*)', 'Bash(git diff*)', 'Bash(git log*)', 'Bash(git show*)', 'Bash(ls*)', 'Bash(dir*)', 'Bash(pwd)'];
 
 export const PROFILE = 'seamless';
 const PROFILE_MARK = '# Written by SeamlessAI';
@@ -114,7 +116,10 @@ export function commandFor(id, { carry = {}, port, mode = DEFAULT_FREE_MODE }) {
   if (step.tool === 'claude') {
     if (carry.resume) args.push('--resume', carry.resume);
     if (step.free) {
-      args.push('--permission-mode', FREE_MODES[mode] ?? FREE_MODES[DEFAULT_FREE_MODE]);
+      const permissionMode = FREE_MODES[mode] ?? FREE_MODES[DEFAULT_FREE_MODE];
+      // The tool list takes every argument up to the next option, so an option must follow it.
+      if (permissionMode !== 'auto') args.push('--allowedTools', READ_ONLY.join(','));
+      args.push('--permission-mode', permissionMode);
       env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${port}`;
       env.ANTHROPIC_AUTH_TOKEN = 'seamless';
       env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = '1';

@@ -114,7 +114,7 @@ How SeamlessAI knows a tool ran out: both tools save each conversation on your c
 
 If you close a tool yourself, SeamlessAI asks whether to switch to the next one; the same conversation then reopens and waits for you instead of continuing by itself. `seamless code --from codex` starts at a later step.
 
-On free models, Claude Code lets file edits through and asks before running commands. Its auto mode would have a model check every tool call first, and on the free step that model is a free one (which may log prompts, and adds a few seconds per call). `seamless relay --free-mode auto` turns auto mode back on; `--free-mode ask` asks before edits too; `--free-mode edits` is the default. The server the free steps use starts in the background when needed; `seamless status` and `seamless stop` manage it.
+On free models, Claude Code lets file edits through and asks before running commands, except read-only ones (`git status`, `git diff`, `git log`, `git show`, `ls`, `dir`, `pwd`), which just run. Its auto mode would have a model check every tool call first, and on the free step that model is a free one (which may log prompts, and adds a few seconds per call). `seamless relay --free-mode auto` turns auto mode back on; `--free-mode ask` asks before edits too; `--free-mode edits` is the default. The server the free steps use starts in the background when needed; `seamless status` and `seamless stop` manage it.
 
 ## Choosing a model
 

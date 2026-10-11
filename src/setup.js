@@ -5,7 +5,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadCatalog, loadConfig, saveConfig, keyFor } from './config.js';
-import { STEPS, defaultOrder, parseOrder, findCommand, ensureCodexProfile } from './relay.js';
+import { STEPS, FREE_MODES, defaultOrder, parseOrder, findCommand, ensureCodexProfile, freeMode } from './relay.js';
 import { ensureRunning, serverPort } from './background.js';
 
 // Providers worth a key, best first, with why.
@@ -61,6 +61,26 @@ export async function setup({ ask, log = console.log }) {
     } catch (err) {
       log(err.message);
     }
+  }
+
+  // How Claude Code asks permission on free models.
+  if (installed.claude) {
+    log('\nWhen Claude Code runs on free models, how should it ask before acting?');
+    log('  edits: file edits go ahead, other commands ask first (recommended)');
+    log('  ask:   everything asks first');
+    log("  auto:  Claude Code's auto mode; free models decide what is safe to run");
+    for (;;) {
+      const answer = (await ask(`Press Enter for ${freeMode()}, or type edits, ask or auto: `)).trim().toLowerCase();
+      if (!answer) break;
+      if (FREE_MODES[answer]) {
+        const config = loadConfig();
+        config.relay = { ...(config.relay || {}), freeMode: answer };
+        saveConfig(config);
+        break;
+      }
+      log('Type edits, ask or auto.');
+    }
+    log(`✓ Claude Code on free models: ${freeMode()} mode. Read-only commands like git status always run without asking.`);
   }
 
   // 3. Codex's free-model profile (a separate file; Codex's own settings aren't changed).

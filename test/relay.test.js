@@ -116,9 +116,9 @@ test('each step starts its tool the right way', () => {
   assert.equal(commandFor('claude', { port: 4141 }).env.ANTHROPIC_BASE_URL, undefined);
   delete process.env.ANTHROPIC_BASE_URL;
   const free = commandFor('claude-free', { port: 4141, carry: { resume: 'abc' } });
-  assert.deepEqual(free.args, ['--resume', 'abc', '--permission-mode', 'acceptEdits']);
+  assert.deepEqual(free.args, ['--resume', 'abc', '--allowedTools', 'Bash(git status*),Bash(git diff*),Bash(git log*),Bash(git show*),Bash(ls*),Bash(dir*),Bash(pwd)', '--permission-mode', 'acceptEdits']);
   assert.deepEqual(commandFor('claude-free', { port: 4141, mode: 'auto' }).args, ['--permission-mode', 'auto']);
-  assert.deepEqual(commandFor('claude-free', { port: 4141, mode: 'ask' }).args, ['--permission-mode', 'manual']);
+  assert.deepEqual(commandFor('claude-free', { port: 4141, mode: 'ask' }).args, ['--allowedTools', 'Bash(git status*),Bash(git diff*),Bash(git log*),Bash(git show*),Bash(ls*),Bash(dir*),Bash(pwd)', '--permission-mode', 'manual']);
   assert.equal(free.env.ANTHROPIC_BASE_URL, 'http://127.0.0.1:4141');
   assert.deepEqual(commandFor('codex-free', { port: 4141, carry: { resume: 'xyz' } }).args, ['resume', '--profile', 'seamless', 'xyz']);
   assert.deepEqual(commandFor('codex', { port: 4141, carry: { prompt: 'go on' } }).args, ['go on']);
@@ -204,7 +204,7 @@ test('Claude Code running out switches to Claude Code on free models, same conve
   const [first, second] = runs();
   assert.deepEqual(first.args, []);
   assert.equal(first.base, null);
-  assert.deepEqual(second.args, ['--resume', 'sess-1', '--permission-mode', 'acceptEdits', 'Continue where you left off.']);
+  assert.deepEqual(second.args, ['--resume', 'sess-1', '--allowedTools', 'Bash(git status*),Bash(git diff*),Bash(git log*),Bash(git show*),Bash(ls*),Bash(dir*),Bash(pwd)', '--permission-mode', 'acceptEdits', 'Continue where you left off.']);
   assert.equal(second.base, 'http://127.0.0.1:4141');
   assert.ok(servers >= 1);
   assert.equal(asked.length, 0); // the last step closing ends the relay without a question

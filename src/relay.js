@@ -183,7 +183,9 @@ export async function relay({ order, from, cwd = process.cwd(), port, ask, log =
     }
 
     const nextStep = STEPS[steps[next]];
-    if (nextStep.tool === step.tool && result.sessionId) carry = { resume: result.sessionId, prompt: CONTINUE_PROMPT };
+    // After running out, the last request still needs an answer; after the
+    // user closed the tool themselves, they say what's next.
+    if (nextStep.tool === step.tool && result.sessionId) carry = result.outOfUsage ? { resume: result.sessionId, prompt: CONTINUE_PROMPT } : { resume: result.sessionId };
     else {
       log(`Writing a handoff note for ${nextStep.label}...`);
       let summarizer = summarize;

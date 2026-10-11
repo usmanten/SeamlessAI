@@ -110,7 +110,7 @@ export async function setup({ ask, askSecret = ask, log = console.log }) {
 
   log('\nAll set. In your project folder, run:\n\n  seamless code\n');
   if (!findCommand('seamless')) {
-    log(`\`seamless\` isn't on your PATH yet. To add it, run \`npm link\` in ${path.resolve(fileURLToPath(import.meta.url), '../..')}`);
+    log(`\`seamless\` isn't on your PATH yet. To add it, run \`npm install -g seamlessai\` (or \`npm link\` in ${path.resolve(fileURLToPath(import.meta.url), '../..')} if you cloned the repo)`);
     log(`(until then, run it as: node ${path.resolve(fileURLToPath(import.meta.url), '../../bin/seamless.js')})\n`);
   }
   log('SeamlessAI keeps running in the background. `seamless status` checks on it, `seamless stop` turns it off.');

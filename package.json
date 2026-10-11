@@ -33,7 +33,8 @@
   ],
   "scripts": {
     "start": "node bin/seamless.js start",
-    "test": "node --test"
+    "test": "node --test",
+    "prepublishOnly": "node --test"
   },
   "engines": {
     "node": ">=20"

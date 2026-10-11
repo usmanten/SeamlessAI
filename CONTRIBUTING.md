@@ -31,4 +31,14 @@ Node.js 20 or newer is all you need. There are no dependencies, and please keep 
 - Run `npm test` before pushing; it also runs on Windows, macOS and Linux for every pull request.
 - Updating a provider's limits or models? Say where the numbers came from in its `verified` field.
 
+## Releasing (maintainer)
+
+SeamlessAI is published to npm as `seamlessai`.
+
+1. Bump the version: `npm version patch` (bug fixes) or `npm version minor` (new features). This updates `package.json` and makes a git tag.
+2. `git push --follow-tags`
+3. `npm publish`. The tests run first and the publish stops if any fail.
+
+`npm pack --dry-run` lists exactly which files a release would include.
+
 By contributing you agree that your contribution is licensed under the project's license (AGPL-3.0-only).

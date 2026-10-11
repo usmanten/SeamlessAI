@@ -34,14 +34,14 @@ Underneath is a local OpenAI-compatible endpoint that sends each request to the 
 Requires Node.js 20 or newer. No dependencies.
 
 ```sh
-git clone https://github.com/usmanten/SeamlessAI.git
-cd SeamlessAI
-npm link            # installs the `seamless` command
-seamless setup      # keys, the relay order, and a quick check
+npm install -g seamlessai   # installs the `seamless` command
+seamless setup              # keys, the relay order, and a quick check
 
 cd ~/my-project
-seamless code       # Claude Code / Codex, switching when one runs out
+seamless code               # Claude Code / Codex, switching when one runs out
 ```
+
+To update later, run `npm update -g seamlessai`, then `seamless stop` so the background server restarts on the new version the next time it's needed. To run from source instead, `git clone` this repo and run `npm link` inside it.
 
 Or run the endpoint yourself for any other tool:
 
@@ -242,7 +242,7 @@ Free tiers change often. Use your own accounts and keys; don't share or pool key
 
 ## Design decisions
 
-- **Zero dependencies.** Plain Node.js 20+ and its built-in `fetch`, `http` and test runner. Installing is a `git clone` and `npm link`, and there is no third-party code to audit or to be compromised through.
+- **Zero dependencies.** Plain Node.js 20+ and its built-in `fetch`, `http` and test runner. Installing is one `npm install -g` with nothing else to download, and there is no third-party code to audit or to be compromised through.
 - **The relay watches files, not logins.** Claude Code and Codex run as themselves on your accounts, and SeamlessAI notices a used-up plan by reading the session files they already save. It never sees, stores or proxies your Anthropic or OpenAI login, which Anthropic's terms don't allow third-party tools to use.
 - **Translate, don't reimplement.** Claude Code and Codex speak different APIs (Anthropic Messages, OpenAI Responses). Both are translated to the one format every free provider understands, so adding a provider is a few lines in `providers.json`.
 - **Rank on live evidence.** Each model's score mixes a quality test you can run yourself (`seamless test`) with live reliability, speed and remaining quota, so a provider having a bad day drops down the list on its own.

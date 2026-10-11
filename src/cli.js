@@ -7,6 +7,9 @@ import { ensureRunning, isRunning, stop, serverPort, logFile } from './backgroun
 import { summarizeWith } from './handoff.js';
 import { setup } from './setup.js';
 import readline from 'node:readline/promises';
+import { createRequire } from 'node:module';
+
+const { version: VERSION } = createRequire(import.meta.url)('../package.json');
 
 const HELP = `seamless: keep coding on free AI providers when your credits run out
 
@@ -59,6 +62,9 @@ Usage:
       Save or delete a provider API key in ~/.seamless/config.json. Leave
       out <key> to paste it without it showing or staying in your history.
       Environment variables (e.g. GROQ_API_KEY) take precedence.
+
+  seamless --version
+      Print the installed version.
 `;
 
 export async function main(argv) {
@@ -90,6 +96,10 @@ export async function main(argv) {
       return privateMode(args[0]);
     case 'trim':
       return trimSetting(args);
+    case 'version':
+    case '--version':
+    case '-v':
+      return console.log(VERSION);
     case undefined:
     case 'help':
     case '--help':

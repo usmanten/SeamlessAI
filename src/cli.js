@@ -87,6 +87,7 @@ function start(flags) {
     if (loadConfig().privateMode) console.log('Private mode is on: providers that may log or train on prompts are skipped.');
     console.log(`Fallback order: ${router.targets().map((t) => t.id).join(' → ')}`);
     console.log('Point your tool at that base URL with any API key and model "auto".');
+    console.log(`For Claude Code, set ANTHROPIC_BASE_URL=http://${host}:${port} and ANTHROPIC_AUTH_TOKEN=seamless.`);
   });
   return new Promise((resolve) => server.on('close', resolve));
 }

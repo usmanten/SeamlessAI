@@ -126,6 +126,7 @@ export class Router {
   unfitFor(target, need) {
     const { model, provider } = target;
     if (need.tools && model.tools === false) return 'model cannot use tools';
+    if (need.tools && need.provenTools && model.tools !== true) return 'model not yet shown to handle tools';
     if (model.context && need.tokens > model.context) return `request (~${need.tokens} tokens) is bigger than its ${model.context}-token context`;
     const { tpm } = limitsOf(target);
     if (tpm && need.tokens > tpm) {
@@ -155,15 +156,17 @@ export class Router {
   /**
    * Sends an OpenAI chat-completions body through the fallback chain. Resolves
    * with the first successful upstream Response; the caller streams its body.
+   * With provenTools, a request with tools only goes to models marked
+   * "tools": true (Claude Code relies on them).
    *
    * Long conversations are handled in two steps, moving on only when it has
    * to: first the whole conversation goes to the best model with room for it;
    * if none can take it, it is trimmed (see trim.js) for the model that needs
    * the least cut, and the result says what was trimmed.
    */
-  async dispatch(body, { signal } = {}) {
+  async dispatch(body, { signal, provenTools = false } = {}) {
     const run = { attempts: [], soonest: Infinity, signal };
-    const need = requestNeeds(body);
+    const need = { ...requestNeeds(body), provenTools };
     const tooBig = []; // { target, limit }: could take a trimmed version
     let fullFitSoonest = Infinity;
 
@@ -198,7 +201,7 @@ export class Router {
           continue;
         }
         const summary = describeTrim(trimmed.report);
-        const result = await this.attempt(target, trimmed.body, requestNeeds(trimmed.body), run);
+        const result = await this.attempt(target, trimmed.body, { ...requestNeeds(trimmed.body), provenTools }, run);
         if (result.response) {
           this.log(`  ✂ trimmed for ${target.id}: ${summary}`);
           return { response: result.response, target, attempts: run.attempts, trimmed: { ...trimmed.report, summary } };

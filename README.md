@@ -102,7 +102,7 @@ seamless trim wait        # always wait for a model with room; trim only if none
 seamless trim off         # never trim; too-big requests fail instead
 ```
 
-Trimming is always announced: the server log shows a `✂ trimmed for ...` line and the response carries an `x-seamless-trimmed` header, for example `3 old tool outputs shortened (~140000 -> ~120000 tokens)`. Your tool still has the full conversation; only what was sent to that one model was shortened. SeamlessAI stores no conversations.
+Trimming is always announced. The answer you see in your tool starts with a line like `[SeamlessAI trimmed this conversation to fit groq/openai/gpt-oss-120b: 3 old tool outputs shortened (~140000 -> ~120000 tokens).]` (left out when the request asks for JSON-only output, which it would break), the server log shows a `✂ trimmed for ...` line, and the response carries the same summary in an `x-seamless-trimmed` header. Your tool still has the full conversation; only what was sent to that one model was shortened. SeamlessAI stores no conversations.
 
 ## How fallback works
 

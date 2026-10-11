@@ -80,16 +80,74 @@ async function chatCompletions(router, req, res, log) {
     'x-seamless-model': target.model.id,
   };
   // The conversation didn't fit any model whole: say what was cut (the
-  // router has already logged it).
-  if (trimmed) headers['x-seamless-trimmed'] = trimmed.summary;
+  // router has already logged it), in a header and, so the user sees it in
+  // their tool, at the start of the answer.
+  let answer = response.body;
+  if (trimmed) {
+    headers['x-seamless-trimmed'] = trimmed.summary;
+    if (answer && !wantsJson(body)) {
+      const notice = `[SeamlessAI trimmed this conversation to fit ${target.id}: ${trimmed.summary}.]\n\n`;
+      answer = body.stream ? streamWithNotice(answer, notice) : await jsonWithNotice(response, notice);
+    }
+  }
   res.writeHead(response.status, headers);
-  if (!response.body) return res.end();
-  Readable.fromWeb(response.body)
+  if (!answer) return res.end();
+  Readable.fromWeb(answer)
     .on('error', (err) => {
       log(`! stream from ${target.id} broke: ${err.message}`);
       res.destroy(err);
     })
     .pipe(res);
+}
+
+/** Whether the client asked for a JSON-only answer, which a notice would break. */
+function wantsJson(body) {
+  const type = body.response_format?.type;
+  return type === 'json_object' || type === 'json_schema';
+}
+
+/** A non-streamed answer with the notice put before the first choice's text. */
+async function jsonWithNotice(response, notice) {
+  const text = await response.text();
+  try {
+    const json = JSON.parse(text);
+    const message = json.choices?.[0]?.message;
+    if (message && (typeof message.content === 'string' || message.content == null)) {
+      message.content = notice + (message.content ?? '');
+      return new Response(JSON.stringify(json)).body;
+    }
+  } catch {}
+  return new Response(text).body;
+}
+
+/**
+ * A streamed answer with one extra event carrying the notice, sent before
+ * the upstream's first event and labelled with that event's id and model so
+ * clients take it as part of the same answer.
+ */
+function streamWithNotice(stream, notice) {
+  const reader = stream.getReader();
+  let first = true;
+  return new ReadableStream({
+    async pull(controller) {
+      const { done, value } = await reader.read();
+      if (done) return controller.close();
+      if (first) {
+        first = false;
+        const line = new TextDecoder().decode(value).split('\n').find((l) => l.startsWith('data:'));
+        let base = {};
+        try {
+          base = JSON.parse(line.slice(5));
+        } catch {}
+        const event = { id: base.id, object: 'chat.completion.chunk', created: base.created, model: base.model, choices: [{ index: 0, delta: { role: 'assistant', content: notice }, finish_reason: null }] };
+        controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`));
+      }
+      controller.enqueue(value);
+    },
+    cancel(reason) {
+      return reader.cancel(reason);
+    },
+  });
 }
 
 function refuseBrowserOrigin(req, localOnly) {

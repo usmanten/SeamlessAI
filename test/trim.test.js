@@ -1,5 +1,6 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
+import http from 'node:http';
 import { Router, AllProvidersFailed, requestNeeds, statedLimit } from '../src/router.js';
 import { createServer } from '../src/server.js';
 import { trimToFit, RECENT_MESSAGES } from '../src/trim.js';
@@ -153,8 +154,47 @@ test('step 2: when no model can take it whole, it is trimmed for the one with mo
     assert.ok(estimate(sent) <= 5000);
     assert.deepEqual(sent.messages[0], SYSTEM);
     assert.equal(sent.messages.at(-1).content, 'latest request: fix the failing test');
+    // The user sees it in their tool too, before the answer.
+    const answer = (await res.json()).choices[0].message.content;
+    assert.match(answer, /^\[SeamlessAI trimmed this conversation to fit small\/small-model: .*old tool outputs shortened.*\]\n\nhi$/);
   } finally {
     server.close();
+  }
+});
+
+test('the trim notice comes first in a streamed answer, and is left out of JSON-only answers', async () => {
+  const upstream = http.createServer(async (req, res) => {
+    let raw = '';
+    for await (const chunk of req) raw += chunk;
+    if (JSON.parse(raw).stream) {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write(`data: ${JSON.stringify({ id: 'c1', model: 'm', choices: [{ index: 0, delta: { content: 'hel' } }] })}\n\n`);
+      return res.end(`data: ${JSON.stringify({ id: 'c1', model: 'm', choices: [{ index: 0, delta: { content: 'lo' } }] })}\n\ndata: [DONE]\n\n`);
+    }
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: '{"ok":true}' } }] }));
+  });
+  await new Promise((r) => upstream.listen(0, '127.0.0.1', r));
+  const router = new Router({ catalog: catalogOf(['small', { url: `http://127.0.0.1:${upstream.address().port}/v1` }, {}, { context: 5000 }]), config: { keys: {} } });
+  const server = createServer(router);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const post = (body) =>
+    fetch(`http://127.0.0.1:${server.address().port}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  try {
+    const streamed = await (await post({ ...session(8), stream: true })).text();
+    const events = streamed.split('\n\n').filter((e) => e.startsWith('data: {')).map((e) => JSON.parse(e.slice(6)));
+    assert.equal(events.length, 3);
+    assert.equal(events[0].id, 'c1');
+    assert.match(events[0].choices[0].delta.content, /^\[SeamlessAI trimmed this conversation/);
+    assert.equal(events.slice(1).map((e) => e.choices[0].delta.content).join(''), 'hello');
+    assert.ok(streamed.endsWith('data: [DONE]\n\n'));
+
+    const res = await post({ ...session(8), response_format: { type: 'json_object' } });
+    assert.ok(res.headers.get('x-seamless-trimmed'));
+    assert.equal((await res.json()).choices[0].message.content, '{"ok":true}');
+  } finally {
+    server.close();
+    upstream.close();
   }
 });
 

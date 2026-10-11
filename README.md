@@ -2,7 +2,7 @@
 
 Keep coding when your AI credits run out. SeamlessAI runs a local OpenAI-compatible endpoint that sends each request to a free AI provider and automatically falls back to the next one when a provider hits its rate limit, rejects a key, or goes down.
 
-Any tool that lets you set a custom OpenAI base URL (Cursor, Continue, Aider, Cline, the OpenAI SDKs, ...) can use it unchanged.
+Any tool that lets you set a custom OpenAI base URL (Cursor, Continue, Aider, Cline, the OpenAI SDKs, ...) can use it unchanged. It also speaks Anthropic's format, so [Claude Code](#claude-code) works too.
 
 ## Quick start
 
@@ -40,6 +40,34 @@ Try it from the terminal without a tool:
 ```sh
 seamless ask "write a python one-liner that reverses a string"
 ```
+
+## Claude Code
+
+Claude Code uses Anthropic's Messages API rather than OpenAI's. SeamlessAI accepts it at `/v1/messages`, translates each request for the free providers (tool calls and streaming included), and translates the answer back. Start `seamless start`, then start Claude Code with these set:
+
+```sh
+# macOS / Linux
+export ANTHROPIC_BASE_URL=http://127.0.0.1:4141
+export ANTHROPIC_AUTH_TOKEN=seamless
+export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+claude
+```
+
+```powershell
+# Windows PowerShell
+$env:ANTHROPIC_BASE_URL = "http://127.0.0.1:4141"
+$env:ANTHROPIC_AUTH_TOKEN = "seamless"
+$env:CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
+claude
+```
+
+The base URL has no `/v1` (Claude Code adds it). The token can be anything. No Claude account or credits are used.
+
+What to expect:
+- Claude's model names (`claude-sonnet-...`, `claude-haiku-...`) mean `auto`. To prefer a provider or model, set `ANTHROPIC_MODEL`, e.g. `ANTHROPIC_MODEL=nvidia/z-ai/glm-5.3`. Claude Code warns once that it doesn't recognize that name; the warning is harmless.
+- Claude Code works by calling tools, so its requests only go to models marked `"tools": true` in the catalog (ones that passed `seamless test`'s tool checks). Other models are skipped for these requests.
+- Every Claude Code request carries about 20,000 tokens of instructions and tool descriptions. Groq's free tier allows 8,000 tokens a minute, so these requests go to NVIDIA and Kilo instead. An NVIDIA key makes Claude Code much more dependable.
+- Not passed on: Anthropic's built-in web search (it only runs on Anthropic's servers), PDFs, images inside tool results, and Claude's extended thinking. The free model's own reasoning is not shown.
 
 ## Choosing a model
 

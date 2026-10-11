@@ -1,13 +1,15 @@
 import http from 'node:http';
 import { Readable } from 'node:stream';
-import { AllProvidersFailed } from './router.js';
+import { AllProvidersFailed, requestNeeds } from './router.js';
+import { toOpenAI, fromOpenAI, streamToAnthropic, errorType } from './anthropic.js';
 
 const MAX_BODY_BYTES = 20 * 1024 * 1024;
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
 
 /**
  * A local OpenAI-compatible server. Point any tool that accepts a custom
- * base URL at http://127.0.0.1:<port>/v1 and use model "auto".
+ * base URL at http://127.0.0.1:<port>/v1 and use model "auto". It also
+ * speaks Anthropic's Messages API (/v1/messages) for Claude Code.
  */
 export function createServer(router, { log = () => {}, localOnly = true } = {}) {
   return http.createServer(async (req, res) => {
@@ -31,6 +33,12 @@ export function createServer(router, { log = () => {}, localOnly = true } = {}) 
       if (req.method === 'POST' && route === '/v1/chat/completions') {
         return await chatCompletions(router, req, res, log);
       }
+      if (req.method === 'POST' && route === '/v1/messages') {
+        return await messages(router, req, res, log);
+      }
+      if (req.method === 'POST' && route === '/v1/messages/count_tokens') {
+        return await countTokens(req, res);
+      }
       sendError(res, 404, `No route for ${req.method} ${url.pathname}`, 'not_found');
     } catch (err) {
       log(`! ${err.stack || err.message}`);
@@ -41,35 +49,86 @@ export function createServer(router, { log = () => {}, localOnly = true } = {}) 
 }
 
 async function chatCompletions(router, req, res, log) {
-  let body;
-  try {
-    body = JSON.parse(await readBody(req));
-  } catch (err) {
-    return sendError(res, 400, `Invalid JSON body: ${err.message}`, 'invalid_request_error');
-  }
+  const body = await readJson(req, res, sendError);
+  if (!body) return;
   if (!Array.isArray(body.messages)) {
     return sendError(res, 400, '"messages" must be an array', 'invalid_request_error');
   }
+  log(`→ chat ${body.model || 'auto'}${body.stream ? ' (stream)' : ''}`);
+  const result = await routeRequest(router, body, res, { log, fail: sendError });
+  if (!result) return;
+  res.writeHead(result.response.status, result.headers);
+  pipe(result.answer, res, result.target, log);
+}
 
+/**
+ * Anthropic's Messages API, which Claude Code uses: translated to the OpenAI
+ * format, routed like any other request, and the answer translated back.
+ */
+async function messages(router, req, res, log) {
+  const body = await readJson(req, res, sendAnthropicError);
+  if (!body) return;
+  if (!Array.isArray(body.messages)) {
+    return sendAnthropicError(res, 400, '"messages" must be an array');
+  }
+  const openai = toOpenAI(body);
+  log(`→ messages ${body.model || 'auto'}${body.stream ? ' (stream)' : ''}`);
+  // Claude Code names its own models ("claude-sonnet-..."); those mean "auto".
+  if (/^claude-/i.test(openai.model || '')) openai.model = 'auto';
+  // Claude Code works through tools, so a model that fumbles them breaks
+  // the task halfway: only models known to handle tools are used.
+  const result = await routeRequest(router, openai, res, { log, fail: sendAnthropicError, provenTools: true });
+  if (!result) return;
+  const { response, target, headers } = result;
+  const isJson = !(response.headers.get('content-type') || '').includes('text/event-stream');
+  const model = body.model || target.id;
+  if (!body.stream) {
+    let json;
+    try {
+      json = JSON.parse(await new Response(result.answer).text());
+    } catch {
+      return sendAnthropicError(res, 502, `${target.id} sent an answer that is not JSON`);
+    }
+    const { 'content-type': _, ...seamlessHeaders } = headers;
+    return sendJson(res, 200, fromOpenAI(json, model), seamlessHeaders);
+  }
+  res.writeHead(200, { ...headers, 'content-type': 'text/event-stream' });
+  const inputTokens = requestNeeds({ ...openai, max_tokens: 0 }).tokens;
+  pipe(streamToAnthropic(result.answer, { model, isJson, inputTokens }), res, target, log);
+}
+
+/** An estimate of a Messages request's input tokens (Claude Code asks before big requests). */
+async function countTokens(req, res) {
+  const body = await readJson(req, res, sendAnthropicError);
+  if (!body) return;
+  if (!Array.isArray(body.messages)) return sendAnthropicError(res, 400, '"messages" must be an array');
+  sendJson(res, 200, { input_tokens: requestNeeds({ ...toOpenAI(body), max_tokens: 0 }).tokens });
+}
+
+/**
+ * Sends an OpenAI-format body through the router. Resolves with the answer
+ * to send back, or null once an error has been sent with `fail`.
+ */
+async function routeRequest(router, body, res, { log, fail, provenTools = false }) {
   // Stop upstream work if the client hangs up.
   const abort = new AbortController();
   res.on('close', () => {
     if (!res.writableFinished) abort.abort();
   });
 
-  log(`→ chat ${body.model || 'auto'}${body.stream ? ' (stream)' : ''}`);
   let result;
   try {
-    result = await router.dispatch(body, { signal: abort.signal });
+    result = await router.dispatch(body, { signal: abort.signal, provenTools });
   } catch (err) {
-    if (abort.signal.aborted) return;
+    if (abort.signal.aborted) return null;
     if (!(err instanceof AllProvidersFailed)) throw err;
     const headers = err.retryAfterMs ? { 'retry-after': String(Math.ceil(err.retryAfterMs / 1000)) } : {};
     const tried = err.attempts.map((a) => (a.skipped ? `${a.target}: skipped (${a.skipped})` : `${a.target}: ${a.status ?? ''} ${a.error ?? ''}`.trim()));
     const message = err.attempts.length
       ? `All providers failed or are rate limited. ${tried.join('; ')}`
       : 'No providers are usable. Add a key with `seamless keys set <provider> <key>` or check `seamless providers`.';
-    return sendError(res, 429, message, 'all_providers_exhausted', headers);
+    fail(res, 429, message, 'all_providers_exhausted', headers);
+    return null;
   }
 
   const { response, target, trimmed } = result;
@@ -87,17 +146,29 @@ async function chatCompletions(router, req, res, log) {
     headers['x-seamless-trimmed'] = trimmed.summary;
     if (answer && !wantsJson(body)) {
       const notice = `[SeamlessAI trimmed this conversation to fit ${target.id}: ${trimmed.summary}.]\n\n`;
-      answer = body.stream ? streamWithNotice(answer, notice) : await jsonWithNotice(response, notice);
+      const streamed = (response.headers.get('content-type') || '').includes('text/event-stream');
+      answer = streamed ? streamWithNotice(answer, notice) : await jsonWithNotice(response, notice);
     }
   }
-  res.writeHead(response.status, headers);
-  if (!answer) return res.end();
-  Readable.fromWeb(answer)
+  return { response, target, headers, answer: answer ?? new Response('').body };
+}
+
+function pipe(stream, res, target, log) {
+  Readable.fromWeb(stream)
     .on('error', (err) => {
       log(`! stream from ${target.id} broke: ${err.message}`);
       res.destroy(err);
     })
     .pipe(res);
+}
+
+async function readJson(req, res, fail) {
+  try {
+    return JSON.parse(await readBody(req));
+  } catch (err) {
+    fail(res, 400, `Invalid JSON body: ${err.message}`, 'invalid_request_error');
+    return null;
+  }
 }
 
 /** Whether the client asked for a JSON-only answer, which a notice would break. */
@@ -199,4 +270,8 @@ function sendJson(res, status, payload, headers = {}) {
 
 function sendError(res, status, message, type, headers) {
   sendJson(res, status, { error: { message, type, code: type } }, headers);
+}
+
+function sendAnthropicError(res, status, message, _type, headers) {
+  sendJson(res, status, { type: 'error', error: { type: errorType(status), message } }, headers);
 }

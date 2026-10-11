@@ -42,9 +42,14 @@ export class AllProvidersFailed extends Error {
  * provider is rate limited, down, or rejects the request.
  */
 export class Router {
-  constructor({ catalog, config, fetchImpl = globalThis.fetch, now = Date.now, timeoutMs = 60_000, log = () => {}, probes = {} }) {
+  /**
+   * `config` is the user's settings; a long-running server passes
+   * `getConfig` instead, so keys, private mode and trim settings saved
+   * while it runs apply to the next request.
+   */
+  constructor({ catalog, config, getConfig = () => config, fetchImpl = globalThis.fetch, now = Date.now, timeoutMs = 60_000, log = () => {}, probes = {} }) {
     this.catalog = catalog;
-    this.config = config;
+    this.getConfig = getConfig;
     this.fetch = fetchImpl;
     this.now = now;
     this.timeoutMs = timeoutMs;
@@ -54,6 +59,10 @@ export class Router {
     this.tokens = new Map(); // bucket -> [{ t, n }] estimated tokens sent
     this.stats = new Map(); // target id -> { outcomes: [bool], latencies: [ms] }
     this.probes = probes; // target id -> { score, testedAt } from `seamless test`
+  }
+
+  get config() {
+    return this.getConfig();
   }
 
   /** Every usable provider/model pair, in catalog order. */
@@ -314,6 +323,8 @@ export class Router {
         headers,
         body: JSON.stringify({ ...body, model: target.model.id }),
         signal: controller.signal,
+        // A key must never follow a redirect to somewhere else.
+        redirect: key ? 'error' : 'follow',
       });
     } catch (err) {
       throw controller.signal.reason instanceof DOMException ? controller.signal.reason : err;

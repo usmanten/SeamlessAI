@@ -1,10 +1,33 @@
 # SeamlessAI
 
-Keep coding when your AI credits run out. SeamlessAI runs a local OpenAI-compatible endpoint that sends each request to a free AI provider and automatically falls back to the next one when a provider hits its rate limit, rejects a key, or goes down.
+[![tests](https://github.com/usmanten/SeamlessAI/actions/workflows/test.yml/badge.svg)](https://github.com/usmanten/SeamlessAI/actions/workflows/test.yml)
+![Node.js 20+](https://img.shields.io/badge/node-%3E%3D20-339933)
+![zero dependencies](https://img.shields.io/badge/dependencies-0-blue)
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 
-Any tool that lets you set a custom OpenAI base URL (Continue, Aider, Cline, the OpenAI SDKs, ...) can use it unchanged. It also speaks Anthropic's format for [Claude Code](#claude-code) and OpenAI's Responses format for [Codex](#codex).
+**Keep coding when your AI credits run out.**
 
-With [`seamless code`](#the-relay-seamless-code), it also runs Claude Code and Codex for you, on your own accounts first, and switches to the next one (and finally to free models) when one runs out of usage, carrying your work over.
+AI coding tools stop when your plan's usage runs out. SeamlessAI keeps you going: it runs Claude Code and Codex on your own accounts first, and when one hits its limit it switches to the next, and finally to free AI models, carrying your conversation and project context over so you don't have to explain everything again.
+
+```mermaid
+flowchart LR
+    you["seamless code"] --> claude["Claude Code<br/>(your account)"]
+    claude -- "usage limit" --> codex["Codex<br/>(your account)"]
+    codex -- "usage limit" --> free["Claude Code on<br/>free models"]
+    free --> server["SeamlessAI local server<br/>127.0.0.1:4141"]
+    server --> nvidia["NVIDIA NIM"]
+    server -. "rate limited? next" .-> groq["Groq"]
+    server -.-> kilo["Kilo gateway"]
+    server -.-> more["..."]
+```
+
+Underneath is a local OpenAI-compatible endpoint that sends each request to the best-ranked free provider and falls back to the next one when a provider hits its rate limit, rejects a key, or goes down. Any tool that lets you set a custom OpenAI base URL (Continue, Aider, Cline, the OpenAI SDKs, ...) can use it unchanged. It also speaks Anthropic's format for [Claude Code](#claude-code) and OpenAI's Responses format for [Codex](#codex).
+
+- [Quick start](#quick-start)
+- [The relay: `seamless code`](#the-relay-seamless-code)
+- [How models are ranked](#how-models-are-ranked) and [how fallback works](#how-fallback-works)
+- [Design decisions](#design-decisions) and [limitations](#limitations)
+- [Security](#security)
 
 ## Quick start
 
@@ -27,7 +50,7 @@ seamless providers  # see which providers are ready
 seamless start      # http://127.0.0.1:4141/v1 (add --background to not keep the window open)
 ```
 
-Two providers (Kilo Code gateway and OVHcloud) work with no key, so `seamless start` works on first run. Add free keys for the faster, more generous providers:
+The Kilo Code gateway works with no key, so `seamless start` works on first run (OVHcloud is also keyless, but its 2 requests a minute make it a slow last resort). Add free keys for the faster, more generous providers:
 
 ```sh
 seamless keys set nvidia   <key>   # https://build.nvidia.com
@@ -35,7 +58,7 @@ seamless keys set groq     <key>   # https://console.groq.com/keys
 seamless keys set cerebras <key>   # optional: a trial that asks for a card
 ```
 
-Keys are stored in `~/.seamless/config.json` (readable only by you). Environment variables `NVIDIA_API_KEY`, `GROQ_API_KEY` and `CEREBRAS_API_KEY` take precedence. Keys are only ever sent over https.
+Leave the key off (`seamless keys set nvidia`) to paste it without it showing or staying in your terminal history. Keys are stored in `~/.seamless/config.json` (readable only by you), and a running server picks up changes without a restart. Environment variables `NVIDIA_API_KEY`, `GROQ_API_KEY` and `CEREBRAS_API_KEY` take precedence. Keys are only ever sent over https.
 
 Then point your tool at:
 
@@ -108,13 +131,13 @@ seamless relay codex, claude, claude-free
 The default is each tool you have installed, then free models. When a tool runs out of usage, SeamlessAI closes it and opens the next step:
 
 - **Same tool** (Claude Code on your account, then on free models): the same conversation is reopened and continues by itself.
-- **Different tool** (Codex, then Claude Code): the new tool can't open the old one's conversation, so SeamlessAI writes `.seamless/handoff.md` in your project (what you're building, what's done, what's next, and the uncommitted changes) and starts the new tool by asking it to read the note. A free model writes the summary from the old session: your requests, the replies and one line per tool call, without tool output or file contents. The `.seamless` folder ignores itself in git.
+- **Different tool** (Codex, then Claude Code): the new tool can't open the old one's conversation, so SeamlessAI writes `.seamless/handoff.md` in your project (what you're building, what's done, what's next, and the uncommitted changes) and starts the new tool by asking it to read the note. A free model writes the summary from the old session: your requests, the replies and one line per tool call, without tool output or file contents. That means this part of your session goes to a free provider, which may log it; with `seamless private on` only providers that don't log are used. The new tool is told to treat the note as notes to check, not as instructions. The `.seamless` folder ignores itself in git.
 
 How SeamlessAI knows a tool ran out: both tools save each conversation on your computer (`~/.claude/projects` and `~/.codex/sessions`) and mark a used-up plan with a code (`rate_limit` and `usage_limit_exceeded`). SeamlessAI only reads those files. Your logins stay inside Claude Code and Codex, which talk to Anthropic and OpenAI as usual; SeamlessAI never sees or uses them. A tool that ran out is skipped by later `seamless code` runs until it resets (Claude Code says when; Codex is tried again after an hour).
 
 If you close a tool yourself, SeamlessAI asks whether to switch to the next one; the same conversation then reopens and waits for you instead of continuing by itself. `seamless code --from codex` starts at a later step.
 
-On free models, Claude Code lets file edits through and asks before running commands, except read-only ones (`git status`, `git diff`, `git log`, `git show`, `ls`, `dir`, `pwd`), which just run. Its auto mode would have a model check every tool call first, and on the free step that model is a free one (which may log prompts, and adds a few seconds per call). `seamless relay --free-mode auto` turns auto mode back on; `--free-mode ask` asks before edits too; `--free-mode edits` is the default. The server the free steps use starts in the background when needed; `seamless status` and `seamless stop` manage it.
+On free models, Claude Code lets file edits through and asks before running commands, except `pwd`, `ls` and `dir`, which just run. git commands ask too: a model that can edit `.git/config` can make even `git status` run a command, and `git diff --output` can overwrite any file. Its auto mode would have a model check every tool call first, and on the free step that model is a free one (which may log prompts, and adds a few seconds per call). `seamless relay --free-mode auto` turns auto mode back on; `--free-mode ask` asks before edits too; `--free-mode edits` is the default. The server the free steps use starts in the background when needed; `seamless status` and `seamless stop` manage it.
 
 ## Choosing a model
 
@@ -214,12 +237,32 @@ Free tiers change often. Use your own accounts and keys; don't share or pool key
 - The server listens on `127.0.0.1` only, and refuses requests that come from web pages (any `Origin` other than localhost) or carry an unexpected `Host` header, so a website you visit can't use your keys or quota. Using `--host 0.0.0.0` shares it with your network and prints a warning.
 - Keys are never sent over plain http, except to this machine.
 - `~/.seamless/` files are readable only by you.
+- Free models come from providers you don't control, so on the free step Claude Code still asks before running any command except `pwd`, `ls` and `dir` (see [the relay](#the-relay-seamless-code)).
+- Found a problem? See [SECURITY.md](SECURITY.md).
+
+## Design decisions
+
+- **Zero dependencies.** Plain Node.js 20+ and its built-in `fetch`, `http` and test runner. Installing is a `git clone` and `npm link`, and there is no third-party code to audit or to be compromised through.
+- **The relay watches files, not logins.** Claude Code and Codex run as themselves on your accounts, and SeamlessAI notices a used-up plan by reading the session files they already save. It never sees, stores or proxies your Anthropic or OpenAI login, which Anthropic's terms don't allow third-party tools to use.
+- **Translate, don't reimplement.** Claude Code and Codex speak different APIs (Anthropic Messages, OpenAI Responses). Both are translated to the one format every free provider understands, so adding a provider is a few lines in `providers.json`.
+- **Rank on live evidence.** Each model's score mixes a quality test you can run yourself (`seamless test`) with live reliability, speed and remaining quota, so a provider having a bad day drops down the list on its own.
+- **Never lose context silently.** Conversations go whole to a model with room for them; trimming only happens when nothing can take them, cuts the least useful parts first, and always says what it cut.
+
+## Limitations
+
+- Free tiers change often; `providers.json` records when each entry was last checked.
+- Automatic switching depends on the session file formats of Claude Code 2.1 and Codex 0.162, which can change in new versions. If a switch doesn't happen, close the tool and SeamlessAI offers to move on.
+- Cursor sends requests through its own servers, so it can't reach a local endpoint.
+- Free models are weaker than Claude or GPT at long agentic tasks, and some providers may log prompts (`seamless private on` skips them).
+- Not passed on to free models: Anthropic's web search, PDFs, images inside tool results, and extended thinking.
 
 ## Development
 
 ```sh
 npm test   # runs against fake local providers, no network needed
 ```
+
+Tests run on Windows, macOS and Linux for every pull request. See [CONTRIBUTING.md](CONTRIBUTING.md) for how the code is laid out, and [SECURITY.md](SECURITY.md) to report a security problem.
 
 ## License
 

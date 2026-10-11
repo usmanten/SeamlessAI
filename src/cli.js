@@ -1,4 +1,4 @@
-import { DEFAULT_PORT, loadCatalog, loadConfig, saveConfig, keyFor, loadProbes, saveProbes } from './config.js';
+import { DEFAULT_PORT, loadCatalog, loadConfig, liveConfig, saveConfig, keyFor, loadProbes, saveProbes } from './config.js';
 import { probeTarget, TESTS } from './probe.js';
 import { Router, AllProvidersFailed } from './router.js';
 import { createServer, isLoopback } from './server.js';
@@ -54,9 +54,10 @@ Usage:
       files. wait: always wait for a model with room; trim only if none
       could ever fit. off: never trim.
 
-  seamless keys set <provider> <key>
+  seamless keys set <provider> [<key>]
   seamless keys remove <provider>
-      Save or delete a provider API key in ~/.seamless/config.json.
+      Save or delete a provider API key in ~/.seamless/config.json. Leave
+      out <key> to paste it without it showing or staying in your history.
       Environment variables (e.g. GROQ_API_KEY) take precedence.
 `;
 
@@ -65,7 +66,7 @@ export async function main(argv) {
   const { flags, args } = parseArgs(rest);
   switch (command) {
     case 'setup':
-      return setup({ ask: question });
+      return setup({ ask: question, askSecret: (text) => (process.stdin.isTTY ? hiddenQuestion(text) : question(text)) });
     case 'code':
       return code(flags);
     case 'relay':
@@ -103,14 +104,14 @@ export async function main(argv) {
 
 async function code(flags) {
   const port = serverPort();
-  const order = relayOrder();
-  if (order.length === 0) {
-    console.error('Neither Claude Code nor Codex is installed. Install one of them, then run `seamless setup`.');
+  if (flags.from !== undefined && !STEPS[flags.from]) {
+    console.error(flags.from === true ? `--from needs a step. Steps: ${Object.keys(STEPS).join(', ')}` : `Unknown step "${flags.from}". Steps: ${Object.keys(STEPS).join(', ')}`);
     process.exitCode = 1;
     return;
   }
-  if (flags.from && !STEPS[flags.from]) {
-    console.error(`Unknown step "${flags.from}". Steps: ${Object.keys(STEPS).join(', ')}`);
+  const order = relayOrder();
+  if (order.length === 0) {
+    console.error('Neither Claude Code nor Codex is installed. Install one of them, then run `seamless setup`.');
     process.exitCode = 1;
     return;
   }
@@ -186,11 +187,41 @@ async function question(text) {
   }
 }
 
+/** Like question, but what is typed isn't shown. Needs a terminal. */
+function hiddenQuestion(text) {
+  return new Promise((resolve, reject) => {
+    const { stdin } = process;
+    let answer = '';
+    process.stdout.write(text);
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.setEncoding('utf8');
+    const done = (err) => {
+      stdin.setRawMode(false);
+      stdin.pause();
+      stdin.off('data', onData);
+      process.stdout.write('\n');
+      if (err) reject(err);
+      else resolve(answer);
+    };
+    const onData = (chunk) => {
+      for (const ch of chunk) {
+        if (ch === '\r' || ch === '\n') return done();
+        if (ch === '\u0003') return done(new Error('Cancelled.'));
+        if (ch === '\u007f' || ch === '\b') answer = answer.slice(0, -1);
+        else if (ch >= ' ') answer += ch;
+      }
+    };
+    stdin.on('data', onData);
+  });
+}
+
 function start(flags) {
   const port = Number(flags.port || process.env.SEAMLESS_PORT || DEFAULT_PORT);
   const host = flags.host || '127.0.0.1';
   const log = flags.quiet ? () => {} : (line) => console.log(line);
-  const router = new Router({ catalog: loadCatalog(), config: loadConfig(), probes: loadProbes(), log });
+  // Settings saved while the server runs (keys, private mode, trim) apply to the next request.
+  const router = new Router({ catalog: loadCatalog(), getConfig: liveConfig(), probes: loadProbes(), log });
 
   const usable = router.status().filter((p) => p.usable);
   if (usable.length === 0) {
@@ -322,11 +353,14 @@ function privateMode(value) {
   console.log(config.privateMode ? 'Private mode on: providers that may log or train on prompts will be skipped.' : 'Private mode off.');
 }
 
-function keys([action, providerId, key]) {
+async function keys([action, providerId, key]) {
   const catalog = loadCatalog();
   const provider = catalog.providers.find((p) => p.id === providerId);
+  // With the key left off, ask for it without showing it, so it stays out of
+  // the terminal's history.
+  if (action === 'set' && provider && !key && process.stdin.isTTY) key = (await hiddenQuestion(`Paste your ${provider.name} key (hidden): `)).trim();
   if (!['set', 'remove'].includes(action) || !provider || (action === 'set' && !key)) {
-    console.error('Usage: seamless keys set <provider> <key> | seamless keys remove <provider>');
+    console.error('Usage: seamless keys set <provider> [<key>] | seamless keys remove <provider>');
     console.error(`Providers: ${catalog.providers.map((p) => p.id).join(', ')}`);
     process.exitCode = 1;
     return;

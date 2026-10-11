@@ -24,6 +24,13 @@ Usage:
   seamless private on | off
       Private mode skips providers that may log or train on your prompts.
 
+  seamless trim [auto [<seconds>] | wait | off]
+      What to do when a conversation is too big for every model that is
+      free right now. auto (default): wait if a model with room is back
+      within <seconds> (default 60), otherwise trim old tool output and
+      files. wait: always wait for a model with room; trim only if none
+      could ever fit. off: never trim.
+
   seamless keys set <provider> <key>
   seamless keys remove <provider>
       Save or delete a provider API key in ~/.seamless/config.json.
@@ -46,6 +53,8 @@ export async function main(argv) {
       return testModels(args[0], flags);
     case 'private':
       return privateMode(args[0]);
+    case 'trim':
+      return trimSetting(args);
     case undefined:
     case 'help':
     case '--help':
@@ -154,6 +163,31 @@ async function testModels(filter, flags) {
     }
   }
   console.log('\nSaved to ~/.seamless/probes.json. `seamless start` now ranks models with these scores.');
+}
+
+function trimSetting([mode, seconds]) {
+  const config = loadConfig();
+  if (mode === undefined) {
+    const current = config.trim ?? 'auto';
+    const wait = config.trimWaitSeconds ?? 60;
+    return console.log(`Trim mode: ${current}${current === 'auto' ? ` (waits up to ${wait}s for a model with room)` : ''}`);
+  }
+  const wait = Number(seconds ?? 60);
+  if (!['auto', 'wait', 'off'].includes(mode) || (seconds !== undefined && (mode !== 'auto' || !(wait >= 0)))) {
+    console.error('Usage: seamless trim [auto [<seconds>] | wait | off]');
+    process.exitCode = 1;
+    return;
+  }
+  config.trim = mode;
+  if (mode === 'auto') config.trimWaitSeconds = wait;
+  saveConfig(config);
+  console.log(
+    {
+      auto: `Trim mode auto: waits up to ${wait}s for a model with room for the whole conversation, otherwise trims old tool output and files.`,
+      wait: 'Trim mode wait: always waits for a model with room for the whole conversation; trims only if none could ever fit.',
+      off: 'Trim mode off: conversations are never trimmed; requests too big for every free model fail instead.',
+    }[mode],
+  );
 }
 
 function privateMode(value) {

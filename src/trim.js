@@ -91,10 +91,7 @@ export function trimToFit(body, limit, estimate) {
   let out = messages;
   if (drop.size) {
     out = messages.filter((_, i) => !drop.has(i));
-    let at = 0;
-    while (at < out.length && isInstructions(out[at])) at++;
-    // A separate system message, so the instructions stay word for word.
-    out.splice(at, 0, droppedNote(drop.size));
+    addNote(out, droppedNote(drop.size));
     report.droppedMessages = drop.size;
   }
 
@@ -138,13 +135,23 @@ function turnStart(messages, i) {
 }
 
 function droppedNote(count) {
-  return {
-    role: 'system',
-    content: `Note from SeamlessAI: the ${count} oldest message${count === 1 ? ' was' : 's were'} removed from this conversation ${NOTE}. Later messages may refer to things no longer shown.`,
-  };
+  return `Note from SeamlessAI: the ${count} oldest message${count === 1 ? ' was' : 's were'} removed from this conversation ${NOTE}. Later messages may refer to things no longer shown.`;
 }
 
-/** Characters the note adds to the messages' JSON, comma included. */
+/**
+ * Adds the note after the first system message's own text, which stays word
+ * for word. Many models refuse a second system message, or one that isn't
+ * first, so the note never gets one of its own unless there is none.
+ */
+function addNote(messages, note) {
+  const first = messages[0];
+  if (!first || !isInstructions(first)) messages.unshift({ role: 'system', content: note });
+  else if (typeof first.content === 'string') messages[0] = { ...first, content: `${first.content}\n\n${note}` };
+  else if (Array.isArray(first.content)) messages[0] = { ...first, content: [...first.content, { type: 'text', text: `\n\n${note}` }] };
+  else messages[0] = { ...first, content: note };
+}
+
+/** Characters the note adds to the messages' JSON, at most (a whole new message). */
 function noteSize(count) {
-  return JSON.stringify(droppedNote(count)).length + 1;
+  return JSON.stringify({ role: 'system', content: droppedNote(count) }).length + 1;
 }

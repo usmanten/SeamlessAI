@@ -514,13 +514,15 @@ export function saysTooBig({ status, error = '' }) {
 }
 
 /**
- * The token limit a "too big" error mentions ("maximum context length is
- * 4096 tokens", "Limit 8000, Requested 9500"): its smallest number of 1000
- * or more, or null.
+ * The token limit a "too big" error states, or null. Only a number right
+ * after a word saying it is the limit counts: errors also mention what was
+ * requested ("maximum context length is 32768 tokens. However, you requested
+ * 33000 tokens (32000 in the messages, 1000 in the completion)").
  */
 export function statedLimit(error = '') {
-  const numbers = (error.match(/\d[\d,]*/g) || []).map((n) => Number(n.replace(/,/g, ''))).filter((n) => n >= 1000);
-  return numbers.length ? Math.min(...numbers) : null;
+  const match = error.match(/(?:context length(?: is| of)?|context window(?: is| of)?|limit(?: is)?:?|maximum(?: is)?:?)\s*(\d[\d,]*)/i);
+  const n = match && Number(match[1].replace(/,/g, ''));
+  return n >= 1000 ? n : null;
 }
 
 export function errorIn(json) {

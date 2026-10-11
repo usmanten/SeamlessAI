@@ -1,6 +1,6 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { Router, AllProvidersFailed, requestNeeds } from '../src/router.js';
+import { Router, AllProvidersFailed, requestNeeds, statedLimit } from '../src/router.js';
 import { createServer } from '../src/server.js';
 import { trimToFit, RECENT_MESSAGES } from '../src/trim.js';
 import { fakeModel, catalogOf } from './helpers.js';
@@ -89,10 +89,14 @@ test('when that is not enough, the oldest whole turns go, with a note', () => {
   const { body: out, report } = trimToFit(body, limit, estimate);
   assert.ok(report.droppedMessages > 0);
   assert.equal(report.droppedMessages % 4, 0, 'whole turns only');
-  assert.deepEqual(out.messages[0], SYSTEM);
-  assert.equal(out.messages[1].role, 'system');
-  assert.match(out.messages[1].content, new RegExp(`the ${report.droppedMessages} oldest messages were removed`));
-  assert.equal(out.messages[2].role, 'user');
+  // The note follows the instructions, word for word, in the same system
+  // message: many models refuse a second one.
+  assert.equal(out.messages[0].role, 'system');
+  assert.ok(out.messages[0].content.startsWith(`${SYSTEM.content}\n\n`));
+  assert.match(out.messages[0].content, new RegExp(`the ${report.droppedMessages} oldest messages were removed`));
+  assert.equal(out.messages.filter((m) => m.role === 'system').length, 1);
+  assert.equal(out.messages[1].role, 'user');
+  assert.equal(SYSTEM.content, 'You are a coding agent. Follow the house style.', 'the caller\'s message is not changed');
   // Every tool result still follows the call that asked for it.
   const calls = new Set(out.messages.flatMap((m) => (m.tool_calls || []).map((c) => c.id)));
   for (const m of out.messages.filter((m) => m.role === 'tool')) assert.ok(calls.has(m.tool_call_id));
@@ -213,4 +217,14 @@ test('the trim setting decides between waiting and trimming', async () => {
   // wait still trims when no model could ever take it whole.
   const waitRouter = new Router({ catalog: catalogOf(['small', small, { limits: { tpm: 3000 } }]), config: { keys: {}, trim: 'wait' } });
   assert.ok((await waitRouter.dispatch(session(4))).trimmed);
+});
+
+test('reads the limit from a too-long error, not the size that was asked for', () => {
+  assert.equal(
+    statedLimit("This model's maximum context length is 32768 tokens. However, you requested 33000 tokens (32000 in the messages, 1000 in the completion)."),
+    32768,
+  );
+  assert.equal(statedLimit('Request too large for model on tokens per minute (TPM): Limit 8000, Requested 9500'), 8000);
+  assert.equal(statedLimit('prompt is too long: 250,000 tokens > 200,000 maximum'), null);
+  assert.equal(statedLimit('input is too long'), null);
 });

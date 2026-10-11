@@ -2,6 +2,7 @@ import http from 'node:http';
 import { Readable } from 'node:stream';
 import { AllProvidersFailed, requestNeeds } from './router.js';
 import { toOpenAI, fromOpenAI, streamToAnthropic, errorType } from './anthropic.js';
+import * as responsesApi from './responses.js';
 
 const MAX_BODY_BYTES = 20 * 1024 * 1024;
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
@@ -9,7 +10,8 @@ const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
 /**
  * A local OpenAI-compatible server. Point any tool that accepts a custom
  * base URL at http://127.0.0.1:<port>/v1 and use model "auto". It also
- * speaks Anthropic's Messages API (/v1/messages) for Claude Code.
+ * speaks Anthropic's Messages API (/v1/messages) for Claude Code and
+ * OpenAI's Responses API (/v1/responses) for Codex.
  */
 export function createServer(router, { log = () => {}, localOnly = true } = {}) {
   return http.createServer(async (req, res) => {
@@ -35,6 +37,9 @@ export function createServer(router, { log = () => {}, localOnly = true } = {}) 
       }
       if (req.method === 'POST' && route === '/v1/messages') {
         return await messages(router, req, res, log);
+      }
+      if (req.method === 'POST' && route === '/v1/responses') {
+        return await responses(router, req, res, log);
       }
       if (req.method === 'POST' && route === '/v1/messages/count_tokens') {
         return await countTokens(req, res);
@@ -95,6 +100,41 @@ async function messages(router, req, res, log) {
   res.writeHead(200, { ...headers, 'content-type': 'text/event-stream' });
   const inputTokens = requestNeeds({ ...openai, max_tokens: 0 }).tokens;
   pipe(streamToAnthropic(result.answer, { model, isJson, inputTokens }), res, target, log);
+}
+
+/**
+ * OpenAI's Responses API, which Codex uses: translated to chat completions,
+ * routed like any other request, and the answer translated back.
+ */
+async function responses(router, req, res, log) {
+  const body = await readJson(req, res, sendError);
+  if (!body) return;
+  if (body.input !== undefined && typeof body.input !== 'string' && !Array.isArray(body.input)) {
+    return sendError(res, 400, '"input" must be a string or an array', 'invalid_request_error');
+  }
+  const { body: openai, custom } = responsesApi.toOpenAI(body);
+  log(`→ responses ${body.model || 'auto'}${body.stream ? ' (stream)' : ''}`);
+  // OpenAI's own model names (Codex's default) mean "auto".
+  if (!openai.model || /^(gpt-|o\d|codex)/i.test(openai.model)) openai.model = 'auto';
+  // Codex works through tools, so only models known to handle them are used.
+  const result = await routeRequest(router, openai, res, { log, fail: sendError, provenTools: true });
+  if (!result) return;
+  const { response, target, headers } = result;
+  const isJson = !(response.headers.get('content-type') || '').includes('text/event-stream');
+  const model = body.model || target.id;
+  if (!body.stream) {
+    let json;
+    try {
+      json = JSON.parse(await new Response(result.answer).text());
+    } catch {
+      return sendError(res, 502, `${target.id} sent an answer that is not JSON`, 'upstream_error');
+    }
+    const { 'content-type': _, ...seamlessHeaders } = headers;
+    return sendJson(res, 200, responsesApi.fromOpenAI(json, { model, custom }), seamlessHeaders);
+  }
+  res.writeHead(200, { ...headers, 'content-type': 'text/event-stream' });
+  const inputTokens = requestNeeds({ ...openai, max_tokens: 0 }).tokens;
+  pipe(responsesApi.streamToResponses(result.answer, { model, custom, isJson, inputTokens }), res, target, log);
 }
 
 /** An estimate of a Messages request's input tokens (Claude Code asks before big requests). */

@@ -2,14 +2,34 @@ import { DEFAULT_PORT, loadCatalog, loadConfig, saveConfig, keyFor, loadProbes, 
 import { probeTarget, TESTS } from './probe.js';
 import { Router, AllProvidersFailed } from './router.js';
 import { createServer, isLoopback } from './server.js';
+import { STEPS, relay, relayOrder, parseOrder, defaultOrder } from './relay.js';
+import { ensureRunning, isRunning, stop, serverPort, logFile } from './background.js';
+import { summarizeWith } from './handoff.js';
+import { setup } from './setup.js';
+import readline from 'node:readline/promises';
 
 const HELP = `seamless: keep coding on free AI providers when your credits run out
 
 Usage:
-  seamless start [--port ${DEFAULT_PORT}] [--host 127.0.0.1] [--quiet]
+  seamless setup
+      One-time guided setup: keys, the relay order, and a quick check.
+
+  seamless code [--from <step>]
+      Run your coding tools one after another in this folder: each on your
+      own account, then on free models. When one runs out of usage,
+      SeamlessAI switches to the next and carries the work over.
+
+  seamless relay [<step>, <step>, ...]
+      Show or set the order \`seamless code\` uses. Steps: ${Object.keys(STEPS).join(', ')}
+
+  seamless start [--port ${DEFAULT_PORT}] [--host 127.0.0.1] [--quiet] [--background]
       Run a local OpenAI-compatible endpoint at http://127.0.0.1:${DEFAULT_PORT}/v1
       Use model "auto" to let SeamlessAI pick, or "<provider>" / "<provider>/<model>"
-      to prefer one (the rest still act as fallback).
+      to prefer one (the rest still act as fallback). --background runs it
+      without keeping this window open.
+
+  seamless status | seamless stop
+      Check on, or stop, SeamlessAI running in the background.
 
   seamless ask "<prompt>" [--model auto]
       Send one prompt through the fallback chain and print the answer.
@@ -41,8 +61,19 @@ export async function main(argv) {
   const [command, ...rest] = argv;
   const { flags, args } = parseArgs(rest);
   switch (command) {
+    case 'setup':
+      return setup({ ask: question });
+    case 'code':
+      return code(flags);
+    case 'relay':
+      return relayCommand(args);
     case 'start':
+      if (flags.background) return background(flags);
       return start(flags);
+    case 'status':
+      return status();
+    case 'stop':
+      return console.log(await stop());
     case 'ask':
       return ask(args.join(' '), flags);
     case 'providers':
@@ -64,6 +95,79 @@ export async function main(argv) {
       console.error(`Unknown command "${command}".\n`);
       console.log(HELP);
       process.exitCode = 1;
+  }
+}
+
+async function code(flags) {
+  const port = serverPort();
+  const order = relayOrder();
+  if (order.length === 0) {
+    console.error('Neither Claude Code nor Codex is installed. Install one of them, then run `seamless setup`.');
+    process.exitCode = 1;
+    return;
+  }
+  if (flags.from && !STEPS[flags.from]) {
+    console.error(`Unknown step "${flags.from}". Steps: ${Object.keys(STEPS).join(', ')}`);
+    process.exitCode = 1;
+    return;
+  }
+  console.log(`Relay order: ${order.map((id) => STEPS[id].label).join(' → ')}`);
+  await relay({
+    order,
+    from: typeof flags.from === 'string' ? flags.from : undefined,
+    port,
+    ask: question,
+    ensureServer: () => ensureRunning(port),
+    summarize: summarizeWith(port),
+  });
+}
+
+function relayCommand(args) {
+  if (args.length) {
+    let order;
+    try {
+      order = parseOrder(args.join(' '));
+    } catch (err) {
+      console.error(err.message);
+      process.exitCode = 1;
+      return;
+    }
+    const config = loadConfig();
+    config.relay = { ...(config.relay || {}), order };
+    saveConfig(config);
+  }
+  const config = loadConfig();
+  const order = relayOrder(config);
+  console.log(`${args.length ? 'Saved. ' : ''}\`seamless code\` runs, in order:`);
+  order.forEach((id, n) => console.log(`  ${n + 1}. ${STEPS[id].label} (${id})`));
+  if (!config.relay?.order?.length) console.log(`(the default for what is installed; set your own with \`seamless relay ${defaultOrder().join(', ') || 'claude, claude-free'}\`)`);
+  const out = Object.entries(config.relayOut || {}).filter(([, until]) => until > Date.now());
+  for (const [id, until] of out) console.log(`${STEPS[id]?.label ?? id} is out of usage until ${new Date(until).toLocaleTimeString()}.`);
+}
+
+async function background(flags) {
+  const port = Number(flags.port) || serverPort();
+  const started = await ensureRunning(port);
+  console.log(`${started ? 'SeamlessAI is now running in the background' : 'SeamlessAI was already running'} at http://127.0.0.1:${port}/v1`);
+  console.log(`Log: ${logFile()}. \`seamless stop\` turns it off.`);
+}
+
+async function status() {
+  if (await isRunning()) console.log(`SeamlessAI is running at http://127.0.0.1:${serverPort()}/v1 (log: ${logFile()}).`);
+  else console.log('SeamlessAI is not running. `seamless code` starts it when needed, or run `seamless start --background`.');
+}
+
+/** Asks a question in the terminal; with no terminal, answers with an empty line. */
+async function question(text) {
+  if (!process.stdin.isTTY) {
+    process.stdout.write(`${text}\n`);
+    return '';
+  }
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return await rl.question(text);
+  } finally {
+    rl.close();
   }
 }
 

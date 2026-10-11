@@ -2,7 +2,7 @@ import { DEFAULT_PORT, loadCatalog, loadConfig, saveConfig, keyFor, loadProbes, 
 import { probeTarget, TESTS } from './probe.js';
 import { Router, AllProvidersFailed } from './router.js';
 import { createServer, isLoopback } from './server.js';
-import { STEPS, relay, relayOrder, parseOrder, defaultOrder } from './relay.js';
+import { STEPS, FREE_MODES, relay, relayOrder, parseOrder, defaultOrder, freeMode } from './relay.js';
 import { ensureRunning, isRunning, stop, serverPort, logFile } from './background.js';
 import { summarizeWith } from './handoff.js';
 import { setup } from './setup.js';
@@ -19,8 +19,11 @@ Usage:
       own account, then on free models. When one runs out of usage,
       SeamlessAI switches to the next and carries the work over.
 
-  seamless relay [<step>, <step>, ...]
+  seamless relay [<step>, <step>, ...] [--free-mode edits|ask|auto]
       Show or set the order \`seamless code\` uses. Steps: ${Object.keys(STEPS).join(', ')}
+      --free-mode sets how Claude Code asks permission on free models:
+      edits (default) lets file edits through and asks before commands, ask
+      asks before both, auto has a free model check each tool call.
 
   seamless start [--port ${DEFAULT_PORT}] [--host 127.0.0.1] [--quiet] [--background]
       Run a local OpenAI-compatible endpoint at http://127.0.0.1:${DEFAULT_PORT}/v1
@@ -66,7 +69,7 @@ export async function main(argv) {
     case 'code':
       return code(flags);
     case 'relay':
-      return relayCommand(args);
+      return relayCommand(args, flags);
     case 'start':
       if (flags.background) return background(flags);
       return start(flags);
@@ -122,7 +125,18 @@ async function code(flags) {
   });
 }
 
-function relayCommand(args) {
+function relayCommand(args, flags = {}) {
+  const setMode = flags['free-mode'];
+  if (setMode !== undefined && !FREE_MODES[setMode]) {
+    console.error(`Unknown free mode "${setMode}". Modes: ${Object.keys(FREE_MODES).join(', ')}`);
+    process.exitCode = 1;
+    return;
+  }
+  if (setMode) {
+    const config = loadConfig();
+    config.relay = { ...(config.relay || {}), freeMode: setMode };
+    saveConfig(config);
+  }
   if (args.length) {
     let order;
     try {
@@ -138,9 +152,10 @@ function relayCommand(args) {
   }
   const config = loadConfig();
   const order = relayOrder(config);
-  console.log(`${args.length ? 'Saved. ' : ''}\`seamless code\` runs, in order:`);
+  console.log(`${args.length || setMode ? 'Saved. ' : ''}\`seamless code\` runs, in order:`);
   order.forEach((id, n) => console.log(`  ${n + 1}. ${STEPS[id].label} (${id})`));
   if (!config.relay?.order?.length) console.log(`(the default for what is installed; set your own with \`seamless relay ${defaultOrder().join(', ') || 'claude, claude-free'}\`)`);
+  if (order.includes('claude-free')) console.log(`Claude Code on free models runs in ${freeMode(config)} mode (change with \`seamless relay --free-mode edits|ask|auto\`).`);
   const out = Object.entries(config.relayOut || {}).filter(([, until]) => until > Date.now());
   for (const [id, until] of out) console.log(`${STEPS[id]?.label ?? id} is out of usage until ${new Date(until).toLocaleTimeString()}.`);
 }

@@ -18,13 +18,22 @@ export const STEPS = {
   'codex-free': { tool: 'codex', free: true, label: 'Codex on free models' },
 };
 
+/**
+ * How Claude Code asks permission on free models (`seamless relay --free-mode`).
+ * In auto mode every tool call is first checked by a model, which on the free
+ * step would be a free model (possibly one that logs prompts), so the
+ * default lets file edits through and asks before commands.
+ */
+export const FREE_MODES = { edits: 'acceptEdits', ask: 'manual', auto: 'auto' };
+export const DEFAULT_FREE_MODE = 'edits';
+
 export const PROFILE = 'seamless';
 const PROFILE_MARK = '# Written by SeamlessAI';
 const POLL_MS = 1500;
 /** Codex doesn't say when its limit resets; it is tried again after this long. */
 const UNKNOWN_RESET_MS = 60 * 60 * 1000;
-// Sent when the same conversation is reopened, so the request that hit the
-// limit gets its answer without the user typing it again.
+// Sent when the same conversation is reopened after running out, so the
+// request that hit the limit gets its answer without the user typing it again.
 const CONTINUE_PROMPT = 'Continue where you left off.';
 const HANDOFF_PROMPT = 'SeamlessAI handoff. You are taking over this project from another AI coding tool that ran out of usage. Read .seamless/handoff.md first, then continue with the next steps it lists.';
 
@@ -53,6 +62,10 @@ export function defaultOrder(installed = (tool) => Boolean(findCommand(tool))) {
 
 export function relayOrder(config = loadConfig()) {
   return config.relay?.order?.length ? config.relay.order : defaultOrder();
+}
+
+export function freeMode(config = loadConfig()) {
+  return FREE_MODES[config.relay?.freeMode] ? config.relay.freeMode : DEFAULT_FREE_MODE;
 }
 
 /** Checks a comma-separated order typed by the user. Returns the list, or throws with the reason. */
@@ -94,13 +107,14 @@ wire_api = "responses"
 }
 
 /** The command line and environment for one step. `carry` is { resume } or { prompt }. */
-export function commandFor(id, { carry = {}, port }) {
+export function commandFor(id, { carry = {}, port, mode = DEFAULT_FREE_MODE }) {
   const step = STEPS[id];
   const args = [];
   const env = { ...process.env };
   if (step.tool === 'claude') {
     if (carry.resume) args.push('--resume', carry.resume);
     if (step.free) {
+      args.push('--permission-mode', FREE_MODES[mode] ?? FREE_MODES[DEFAULT_FREE_MODE]);
       env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${port}`;
       env.ANTHROPIC_AUTH_TOKEN = 'seamless';
       env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = '1';
@@ -129,6 +143,7 @@ export function commandFor(id, { carry = {}, port }) {
 export async function relay({ order, from, cwd = process.cwd(), port, ask, log = console.log, ensureServer, summarize, now = Date.now }) {
   const config = loadConfig();
   const outUntil = { ...(config.relayOut || {}) };
+  const mode = freeMode(config);
   const steps = [...order];
   let i = from ? steps.indexOf(from) : 0;
   if (i < 0) throw new Error(`"${from}" is not in the relay order (${steps.join(', ')}).`);
@@ -161,7 +176,7 @@ export async function relay({ order, from, cwd = process.cwd(), port, ask, log =
     }
 
     log(`\n▶ ${step.label}${carry.resume ? ', continuing the same conversation' : carry.prompt ? ', picking up from the handoff note' : ''}\n`);
-    const result = await runStep(id, { carry, port, cwd });
+    const result = await runStep(id, { carry, port, cwd, mode });
 
     if (result.outOfUsage) {
       const until = result.outOfUsage.resetsAt ?? now() + UNKNOWN_RESET_MS;
@@ -208,9 +223,9 @@ export async function relay({ order, from, cwd = process.cwd(), port, ask, log =
  * { outOfUsage, sessionId, file }. A tool on the user's account is closed
  * as soon as its session file shows it ran out of usage.
  */
-export async function runStep(id, { carry = {}, port, cwd = process.cwd() }) {
+export async function runStep(id, { carry = {}, port, cwd = process.cwd(), mode }) {
   const step = STEPS[id];
-  const { command, args, env } = commandFor(id, { carry, port });
+  const { command, args, env } = commandFor(id, { carry, port, mode });
   const watcher = new SessionWatcher(step.tool, { cwd, since: Date.now() });
   const child = spawnTool(findCommand(command) || command, args, { cwd, env });
 

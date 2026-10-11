@@ -2,6 +2,8 @@
 // saves free provider keys, picks the relay order, prepares Codex, starts
 // SeamlessAI in the background and checks a free model answers.
 
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { loadCatalog, loadConfig, saveConfig, keyFor } from './config.js';
 import { STEPS, defaultOrder, parseOrder, findCommand, ensureCodexProfile } from './relay.js';
 import { ensureRunning, serverPort } from './background.js';
@@ -87,6 +89,10 @@ export async function setup({ ask, log = console.log }) {
   }
 
   log('\nAll set. In your project folder, run:\n\n  seamless code\n');
+  if (!findCommand('seamless')) {
+    log(`\`seamless\` isn't on your PATH yet. To add it, run \`npm link\` in ${path.resolve(fileURLToPath(import.meta.url), '../..')}`);
+    log(`(until then, run it as: node ${path.resolve(fileURLToPath(import.meta.url), '../../bin/seamless.js')})\n`);
+  }
   log('SeamlessAI keeps running in the background. `seamless status` checks on it, `seamless stop` turns it off.');
 }
 

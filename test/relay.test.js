@@ -116,7 +116,9 @@ test('each step starts its tool the right way', () => {
   assert.equal(commandFor('claude', { port: 4141 }).env.ANTHROPIC_BASE_URL, undefined);
   delete process.env.ANTHROPIC_BASE_URL;
   const free = commandFor('claude-free', { port: 4141, carry: { resume: 'abc' } });
-  assert.deepEqual(free.args, ['--resume', 'abc']);
+  assert.deepEqual(free.args, ['--resume', 'abc', '--permission-mode', 'acceptEdits']);
+  assert.deepEqual(commandFor('claude-free', { port: 4141, mode: 'auto' }).args, ['--permission-mode', 'auto']);
+  assert.deepEqual(commandFor('claude-free', { port: 4141, mode: 'ask' }).args, ['--permission-mode', 'manual']);
   assert.equal(free.env.ANTHROPIC_BASE_URL, 'http://127.0.0.1:4141');
   assert.deepEqual(commandFor('codex-free', { port: 4141, carry: { resume: 'xyz' } }).args, ['resume', '--profile', 'seamless', 'xyz']);
   assert.deepEqual(commandFor('codex', { port: 4141, carry: { prompt: 'go on' } }).args, ['go on']);
@@ -202,7 +204,7 @@ test('Claude Code running out switches to Claude Code on free models, same conve
   const [first, second] = runs();
   assert.deepEqual(first.args, []);
   assert.equal(first.base, null);
-  assert.deepEqual(second.args, ['--resume', 'sess-1', 'Continue where you left off.']);
+  assert.deepEqual(second.args, ['--resume', 'sess-1', '--permission-mode', 'acceptEdits', 'Continue where you left off.']);
   assert.equal(second.base, 'http://127.0.0.1:4141');
   assert.ok(servers >= 1);
   assert.equal(asked.length, 0); // the last step closing ends the relay without a question
@@ -252,4 +254,14 @@ test('closing a tool normally asks before switching, and skips tools still out o
   await relay({ order: ['claude', 'codex'], cwd: project, port: 4141, log: (l) => lines.push(l), ask: async () => '', ensureServer: async () => {} });
   assert.deepEqual(runs().map((r) => r.tool), ['codex']);
   assert.ok(lines.some((l) => /Skipping Claude Code \(your account\): it's out of usage until/.test(l)));
+});
+
+test('closing Claude Code yourself reopens the conversation on free models without a prompt', async () => {
+  reset();
+  fakeTool('claude', { file: claudeFile('s4'), lines: jsonl(...claudeEntries('s4')) });
+  saveConfig({ ...loadConfig(), relay: { freeMode: 'auto' } });
+  await relay({ order: ['claude', 'claude-free'], cwd: project, port: 4141, log: quiet, ask: async () => 'y', ensureServer: async () => {} });
+  const [, second] = runs();
+  // The last request already has its answer, so there is nothing to continue.
+  assert.deepEqual(second.args, ['--resume', 's4', '--permission-mode', 'auto']);
 });

@@ -2,7 +2,9 @@
 
 Keep coding when your AI credits run out. SeamlessAI runs a local OpenAI-compatible endpoint that sends each request to a free AI provider and automatically falls back to the next one when a provider hits its rate limit, rejects a key, or goes down.
 
-Any tool that lets you set a custom OpenAI base URL (Cursor, Continue, Aider, Cline, the OpenAI SDKs, ...) can use it unchanged. It also speaks Anthropic's format, so [Claude Code](#claude-code) works too.
+Any tool that lets you set a custom OpenAI base URL (Continue, Aider, Cline, the OpenAI SDKs, ...) can use it unchanged. It also speaks Anthropic's format for [Claude Code](#claude-code) and OpenAI's Responses format for [Codex](#codex).
+
+With [`seamless code`](#the-relay-seamless-code), it also runs Claude Code and Codex for you, on your own accounts first, and switches to the next one (and finally to free models) when one runs out of usage, carrying your work over.
 
 ## Quick start
 
@@ -12,9 +14,17 @@ Requires Node.js 20 or newer. No dependencies.
 git clone https://github.com/usmanten/SeamlessAI.git
 cd SeamlessAI
 npm link            # installs the `seamless` command
+seamless setup      # keys, the relay order, and a quick check
 
+cd ~/my-project
+seamless code       # Claude Code / Codex, switching when one runs out
+```
+
+Or run the endpoint yourself for any other tool:
+
+```sh
 seamless providers  # see which providers are ready
-seamless start      # http://127.0.0.1:4141/v1
+seamless start      # http://127.0.0.1:4141/v1 (add --background to not keep the window open)
 ```
 
 Two providers (Kilo Code gateway and OVHcloud) work with no key, so `seamless start` works on first run. Add free keys for the faster, more generous providers:
@@ -68,6 +78,43 @@ What to expect:
 - Claude Code works by calling tools, so its requests only go to models marked `"tools": true` in the catalog (ones that passed `seamless test`'s tool checks). Other models are skipped for these requests.
 - Every Claude Code request carries about 20,000 tokens of instructions and tool descriptions. Groq's free tier allows 8,000 tokens a minute, so these requests go to NVIDIA and Kilo instead. An NVIDIA key makes Claude Code much more dependable.
 - Not passed on: Anthropic's built-in web search (it only runs on Anthropic's servers), PDFs, images inside tool results, and Claude's extended thinking. The free model's own reasoning is not shown.
+
+## Codex
+
+Codex speaks OpenAI's Responses API, which SeamlessAI accepts at `/v1/responses` and translates for the free providers (tool calls, Codex's freeform patch tool and streaming included). `seamless setup` (or the first `seamless code` that needs it) writes a Codex profile to `~/.codex/seamless.config.toml`, so Codex runs on free models with:
+
+```sh
+codex --profile seamless
+```
+
+Your own `~/.codex/config.toml` is not changed. Like Claude Code's, Codex's requests only go to models marked `"tools": true`. Codex's hosted web search and its sub-agent tools aren't passed on, and it warns once that it doesn't know the model `auto`; the warning is harmless.
+
+## The relay: `seamless code`
+
+Run `seamless code` in your project folder instead of `claude` or `codex`. It opens your coding tools one at a time, in an order you choose:
+
+```sh
+seamless relay                         # show the order
+seamless relay codex, claude, claude-free
+```
+
+| Step          | What runs                                          |
+|---------------|----------------------------------------------------|
+| `claude`      | Claude Code on your own account                    |
+| `codex`       | Codex on your own account                          |
+| `claude-free` | Claude Code on SeamlessAI's free models            |
+| `codex-free`  | Codex on SeamlessAI's free models                  |
+
+The default is each tool you have installed, then free models. When a tool runs out of usage, SeamlessAI closes it and opens the next step:
+
+- **Same tool** (Claude Code on your account, then on free models): the same conversation is reopened and continues by itself.
+- **Different tool** (Codex, then Claude Code): the new tool can't open the old one's conversation, so SeamlessAI writes `.seamless/handoff.md` in your project (what you're building, what's done, what's next, and the uncommitted changes) and starts the new tool by asking it to read the note. A free model writes the summary from the old session: your requests, the replies and one line per tool call, without tool output or file contents. The `.seamless` folder ignores itself in git.
+
+How SeamlessAI knows a tool ran out: both tools save each conversation on your computer (`~/.claude/projects` and `~/.codex/sessions`) and mark a used-up plan with a code (`rate_limit` and `usage_limit_exceeded`). SeamlessAI only reads those files. Your logins stay inside Claude Code and Codex, which talk to Anthropic and OpenAI as usual; SeamlessAI never sees or uses them. A tool that ran out is skipped by later `seamless code` runs until it resets (Claude Code says when; Codex is tried again after an hour).
+
+If you close a tool yourself, SeamlessAI asks whether to switch to the next one; the same conversation then reopens and waits for you instead of continuing by itself. `seamless code --from codex` starts at a later step.
+
+On free models, Claude Code lets file edits through and asks before running commands, except read-only ones (`git status`, `git diff`, `git log`, `git show`, `ls`, `dir`, `pwd`), which just run. Its auto mode would have a model check every tool call first, and on the free step that model is a free one (which may log prompts, and adds a few seconds per call). `seamless relay --free-mode auto` turns auto mode back on; `--free-mode ask` asks before edits too; `--free-mode edits` is the default. The server the free steps use starts in the background when needed; `seamless status` and `seamless stop` manage it.
 
 ## Choosing a model
 

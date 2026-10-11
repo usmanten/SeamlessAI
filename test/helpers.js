@@ -64,3 +64,23 @@ export function catalogOf(...providers) {
 export function chat(extra = {}) {
   return { model: 'auto', messages: [{ role: 'user', content: 'hello' }], ...extra };
 }
+
+/** A provider that streams the given chat-completion chunks as server-sent events. */
+export async function streamingModel(chunks) {
+  const state = { requests: [] };
+  const server = http.createServer(async (req, res) => {
+    let raw = '';
+    for await (const c of req) raw += c;
+    state.requests.push(JSON.parse(raw));
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    for (const c of typeof chunks === 'function' ? chunks(state.requests.at(-1)) : chunks) res.write(`data: ${JSON.stringify(c)}\n\n`);
+    res.end('data: [DONE]\n\n');
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  state.url = `http://127.0.0.1:${server.address().port}/v1`;
+  state.close = () => {
+    server.closeAllConnections();
+    server.close();
+  };
+  return state;
+}

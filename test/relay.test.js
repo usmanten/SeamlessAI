@@ -73,7 +73,12 @@ fs.appendFileSync(${JSON.stringify(record)}, JSON.stringify({ tool: ${JSON.strin
 ${file ? `fs.appendFileSync(${JSON.stringify(file)}, ${JSON.stringify(lines)});` : ''}
 ${wait ? "if (!process.env.ANTHROPIC_BASE_URL) setInterval(() => {}, 1000);" : ''}
 `;
-  fs.writeFileSync(path.join(bin, name), script, { mode: 0o755 });
+  if (process.platform === 'win32') {
+    // Windows runs neither shebangs nor extensionless files: a .cmd wrapper
+    // stands in, like the ones npm installs.
+    fs.writeFileSync(path.join(bin, `${name}.js`), script);
+    fs.writeFileSync(path.join(bin, `${name}.cmd`), `@node "%~dp0${name}.js" %*\r\n`);
+  } else fs.writeFileSync(path.join(bin, name), script, { mode: 0o755 });
 }
 
 function runs() {

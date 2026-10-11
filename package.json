@@ -1,7 +1,27 @@
 {
   "name": "seamlessai",
   "version": "0.1.0",
-  "description": "Local OpenAI-compatible endpoint that falls back across free AI providers so you can keep coding when your credits run out.",
+  "description": "Keep coding when your AI credits run out: relays between Claude Code and Codex on your own accounts, then free AI models, through a local OpenAI-compatible endpoint.",
+  "keywords": [
+    "ai",
+    "llm",
+    "free",
+    "claude-code",
+    "codex",
+    "openai-compatible",
+    "proxy",
+    "fallback",
+    "cli"
+  ],
+  "homepage": "https://github.com/usmanten/SeamlessAI#readme",
+  "bugs": {
+    "url": "https://github.com/usmanten/SeamlessAI/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/usmanten/SeamlessAI.git"
+  },
+  "author": "Usman (https://github.com/usmanten)",
   "type": "module",
   "bin": {
     "seamless": "bin/seamless.js"

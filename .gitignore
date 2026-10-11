@@ -2,3 +2,5 @@ node_modules/
 .env
 .seamless/
 *.log
+coverage/
+.DS_Store

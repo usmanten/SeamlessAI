@@ -76,7 +76,8 @@ async function messages(router, req, res, log) {
   if (!Array.isArray(body.messages)) {
     return sendAnthropicError(res, 400, '"messages" must be an array');
   }
-  const openai = toOpenAI(body);
+  const openai = translate(() => toOpenAI(body), res, sendAnthropicError);
+  if (!openai) return;
   log(`→ messages ${body.model || 'auto'}${body.stream ? ' (stream)' : ''}`);
   // Claude Code names its own models ("claude-sonnet-..."); those mean "auto".
   if (/^claude-/i.test(openai.model || '')) openai.model = 'auto';
@@ -112,7 +113,9 @@ async function responses(router, req, res, log) {
   if (body.input !== undefined && typeof body.input !== 'string' && !Array.isArray(body.input)) {
     return sendError(res, 400, '"input" must be a string or an array', 'invalid_request_error');
   }
-  const { body: openai, custom } = responsesApi.toOpenAI(body);
+  const translated = translate(() => responsesApi.toOpenAI(body), res, sendError);
+  if (!translated) return;
+  const { body: openai, custom } = translated;
   log(`→ responses ${body.model || 'auto'}${body.stream ? ' (stream)' : ''}`);
   // OpenAI's own model names (Codex's default) mean "auto".
   if (!openai.model || /^(gpt-|o\d|codex)/i.test(openai.model)) openai.model = 'auto';
@@ -142,7 +145,21 @@ async function countTokens(req, res) {
   const body = await readJson(req, res, sendAnthropicError);
   if (!body) return;
   if (!Array.isArray(body.messages)) return sendAnthropicError(res, 400, '"messages" must be an array');
-  sendJson(res, 200, { input_tokens: requestNeeds({ ...toOpenAI(body), max_tokens: 0 }).tokens });
+  const openai = translate(() => toOpenAI(body), res, sendAnthropicError);
+  if (openai) sendJson(res, 200, { input_tokens: requestNeeds({ ...openai, max_tokens: 0 }).tokens });
+}
+
+/**
+ * Runs a request translation. A body with the wrong shape (a message whose
+ * content is null, say) gets a 400 saying so instead of a server error.
+ */
+function translate(fn, res, fail) {
+  try {
+    return fn();
+  } catch (err) {
+    fail(res, 400, `Malformed request: ${err.message}`, 'invalid_request_error');
+    return null;
+  }
 }
 
 /**

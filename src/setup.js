@@ -14,7 +14,7 @@ const SUGGESTED = [
   ['groq', 'the fastest for short questions'],
 ];
 
-export async function setup({ ask, log = console.log }) {
+export async function setup({ ask, askSecret = ask, log = console.log }) {
   log('SeamlessAI setup\n');
 
   const [major] = process.versions.node.split('.').map(Number);
@@ -36,7 +36,7 @@ export async function setup({ ask, log = console.log }) {
       continue;
     }
     log(`\n${provider.name} (${why}): get a key at ${provider.auth.signupUrl}`);
-    const key = (await ask(`Paste your ${provider.name} key, or press Enter to skip: `)).trim();
+    const key = (await askSecret(`Paste your ${provider.name} key (hidden), or press Enter to skip: `)).trim();
     if (key) {
       config.keys[id] = key;
       log(`✓ Saved ${provider.name} key`);
@@ -80,7 +80,7 @@ export async function setup({ ask, log = console.log }) {
       }
       log('Type edits, ask or auto.');
     }
-    log(`✓ Claude Code on free models: ${freeMode()} mode. Read-only commands like git status always run without asking.`);
+    log(`✓ Claude Code on free models: ${freeMode()} mode. Only pwd, ls and dir run without asking.`);
   }
 
   // 3. Codex's free-model profile (a separate file; Codex's own settings aren't changed).

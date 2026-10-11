@@ -25,6 +25,35 @@ export function loadConfig() {
   }
 }
 
+/**
+ * A function returning the current config, re-read only when the file
+ * changes, for a server that keeps running while the user changes settings.
+ * If the file is mid-write or broken, the last good config is kept.
+ */
+export function liveConfig() {
+  let config = loadConfig();
+  let stamp = configStamp();
+  return () => {
+    const now = configStamp();
+    if (now !== stamp) {
+      try {
+        config = loadConfig();
+        stamp = now;
+      } catch {}
+    }
+    return config;
+  };
+}
+
+function configStamp() {
+  try {
+    const { mtimeMs, size } = fs.statSync(configPath());
+    return `${mtimeMs}:${size}`;
+  } catch {
+    return 'none';
+  }
+}
+
 export function saveConfig(config) {
   // Keys live here, so keep the file private to the user.
   writePrivate(configPath(), config);

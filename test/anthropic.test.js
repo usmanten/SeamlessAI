@@ -132,6 +132,19 @@ test('a streamed answer becomes Anthropic events, with tool calls sent whole', a
   assert.deepEqual(up.requests[0].stream_options, { include_usage: true });
 });
 
+test('tool arguments sent twice keep the first complete copy', async () => {
+  const args = '{"file_path":"a.html","content":"<style>p{color:red}</style>"}';
+  const up = await streamingModel([
+    { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_2', type: 'function', function: { name: 'Write', arguments: '' } }] } }] },
+    { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: args } }] } }] },
+    { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: args } }] }, finish_reason: 'tool_calls' }] },
+  ]);
+  const base = await serve(['kilo', up, {}, { tools: true }]);
+  const res = await post(base, '/v1/messages', { model: 'claude-sonnet-4-5', max_tokens: 100, stream: true, tools: TOOLS, messages: [{ role: 'user', content: 'write a.html' }] });
+  const call = sse(await res.text()).find((e) => e.delta?.type === 'input_json_delta');
+  assert.deepEqual(JSON.parse(call.delta.partial_json), { file_path: 'a.html', content: '<style>p{color:red}</style>' });
+});
+
 test('a stream keeps going through chunks that carry nothing to send (reasoning, partial tool calls)', async () => {
   const up = await streamingModel(
     [
@@ -149,6 +162,39 @@ test('a stream keeps going through chunks that carry nothing to send (reasoning,
   const events = sse(await res.text());
   assert.equal(events.at(-1).type, 'message_stop');
   assert.deepEqual(JSON.parse(events.find((e) => e.delta?.type === 'input_json_delta').delta.partial_json), { path: 'a.js' });
+});
+
+test('an error partway through a stream is passed on, and the provider is benched', async () => {
+  // Recorded from Kilo (2026-10-12): a big Write went quiet, then this arrived with HTTP 200.
+  const broken = await streamingModel([
+    { choices: [{ index: 0, delta: { content: '\n\n\n' } }] },
+    { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_3', type: 'function', function: { name: 'Write', arguments: '{"file_' } }] } }] },
+    { choices: [], error: { code: 504, message: 'Upstream idle timeout exceeded', metadata: { error_type: 'timeout' } } },
+  ]);
+  const good = await fakeModel(() => ({ content: 'from the next one' }));
+  open.push(good);
+  const base = await serve(['kilo', broken, {}, { tools: true }], ['groq', good, {}, { tools: true }]);
+  const res = await post(base, '/v1/messages', { model: 'claude-sonnet-4-5', max_tokens: 100, stream: true, tools: TOOLS, messages: [{ role: 'user', content: 'write it' }] });
+  const events = sse(await res.text());
+  assert.equal(events.find((e) => e.type === 'content_block_start' && e.content_block.type === 'tool_use'), undefined);
+  assert.equal(events.at(-1).type, 'error');
+  assert.match(events.at(-1).error.message, /Upstream idle timeout exceeded \(504\)/);
+  // The client's retry goes to the next provider.
+  const retry = await post(base, '/v1/messages', { model: 'claude-sonnet-4-5', max_tokens: 100, tools: TOOLS, messages: [{ role: 'user', content: 'write it' }] });
+  assert.equal((await retry.json()).content[0].text, 'from the next one');
+  assert.equal(broken.requests.length, 1);
+});
+
+test('a tool call cut off by the length limit is not sent as an empty call', async () => {
+  const up = await streamingModel([
+    { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_4', type: 'function', function: { name: 'Write', arguments: '{"file_path":"a.html","content":"<html>' } }] } }] },
+    { choices: [{ index: 0, delta: {}, finish_reason: 'length' }] },
+  ]);
+  const base = await serve(['kilo', up, {}, { tools: true }]);
+  const res = await post(base, '/v1/messages', { model: 'claude-sonnet-4-5', max_tokens: 100, stream: true, tools: TOOLS, messages: [{ role: 'user', content: 'write it' }] });
+  const events = sse(await res.text());
+  assert.equal(events.find((e) => e.content_block?.type === 'tool_use'), undefined);
+  assert.equal(events.find((e) => e.type === 'message_delta').delta.stop_reason, 'max_tokens');
 });
 
 test('a provider that ignores the stream flag still gives a streamed answer', async () => {

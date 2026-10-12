@@ -114,20 +114,39 @@ function toolUse(id, name, args) {
   return { type: 'tool_use', id: id || `toolu_${randomBytes(12).toString('hex')}`, name, input: parseArgs(args) };
 }
 
-/** Tool arguments as an object. Models sometimes send none, or slightly broken JSON. */
-function parseArgs(args) {
+/** The first balanced {...} in text, skipping braces inside strings. */
+function firstObject(text) {
+  const start = text.indexOf('{');
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+    if (inString) {
+      if (c === '\\') i++;
+      else if (c === '"') inString = false;
+    } else if (c === '"') inString = true;
+    else if (c === '{') depth++;
+    else if (c === '}' && --depth === 0) return text.slice(start, i + 1);
+  }
+  return null;
+}
+
+/** Tool arguments as an object (or `broken` if they don't parse). Models sometimes send none, or slightly broken JSON. */
+function parseArgs(args, broken = {}) {
   if (!args) return {};
   if (typeof args === 'object') return args;
   try {
     const parsed = JSON.parse(args);
-    return parsed && typeof parsed === 'object' ? parsed : {};
+    return parsed && typeof parsed === 'object' ? parsed : broken;
   } catch {
-    // Text after the JSON object (a stray token or a repeat) is the common case.
-    const end = args.lastIndexOf('}');
+    // Text after the JSON object (a stray token, or the whole object sent
+    // twice) is the common case, so keep the first complete object.
+    const first = firstObject(args);
     try {
-      return JSON.parse(args.slice(0, end + 1));
+      return first ? JSON.parse(first) : broken;
     } catch {
-      return {};
+      return broken;
     }
   }
 }
@@ -149,7 +168,7 @@ function messageId() {
  * end, since Claude Code only acts on complete ones and models sometimes
  * send their arguments out of order.
  */
-export function streamToAnthropic(body, { model, isJson = false, inputTokens = 0 }) {
+export function streamToAnthropic(body, { model, isJson = false, inputTokens = 0, onError = () => {} }) {
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
   const reader = body.getReader();
@@ -194,14 +213,18 @@ export function streamToAnthropic(body, { model, isJson = false, inputTokens = 0
         finished = true;
         start();
         closeText();
-        for (const call of calls.filter(Boolean)) {
+        // A call cut off partway (the model ran out of room, or its arguments
+        // don't parse) would reach the tool with nothing in it, so it's left
+        // out and the answer reports running out of room instead.
+        const usable = calls.filter((call) => call && finish !== 'length' && parseArgs(call.args, null) !== null);
+        for (const call of usable) {
           const block = toolUse(call.id, call.name, call.args);
           send('content_block_start', { index, content_block: { ...block, input: {} } });
           send('content_block_delta', { index, delta: { type: 'input_json_delta', partial_json: JSON.stringify(block.input) } });
           send('content_block_stop', { index });
           index++;
         }
-        const reason = calls.some(Boolean) ? 'tool_use' : STOP_REASONS[finish] ?? 'end_turn';
+        const reason = usable.length ? 'tool_use' : calls.some(Boolean) ? 'max_tokens' : STOP_REASONS[finish] ?? 'end_turn';
         send('message_delta', { delta: { stop_reason: reason, stop_sequence: null }, usage });
         send('message_stop', {});
         controller.close();
@@ -211,6 +234,8 @@ export function streamToAnthropic(body, { model, isJson = false, inputTokens = 0
           usage.input_tokens = chunk.usage.prompt_tokens ?? usage.input_tokens;
           usage.output_tokens = chunk.usage.completion_tokens ?? usage.output_tokens;
         }
+        // An error partway through still comes with HTTP 200, as a chunk.
+        if (chunk.error) throw new Error(`${chunk.error.message || 'unknown error'}${chunk.error.code ? ` (${chunk.error.code})` : ''}`);
         const choice = chunk.choices?.[0];
         if (!choice) return;
         const delta = choice.delta ?? choice.message ?? {};
@@ -249,16 +274,21 @@ export function streamToAnthropic(body, { model, isJson = false, inputTokens = 0
             if (!line.startsWith('data:')) continue;
             const data = line.slice(5).trim();
             if (data === '[DONE]') return end();
+            let chunk;
             try {
-              take(JSON.parse(data));
-              start();
-            } catch {}
+              chunk = JSON.parse(data);
+            } catch {
+              continue;
+            }
+            take(chunk);
+            start();
           }
           if (events > before) return;
         }
       } catch (err) {
         if (finished) return;
         finished = true;
+        onError(err.message);
         start();
         send('error', { error: { type: 'api_error', message: `SeamlessAI: the provider's answer broke off: ${err.message}` } });
         controller.close();

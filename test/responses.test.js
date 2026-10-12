@@ -150,6 +150,20 @@ test('a streamed answer with text and tool calls becomes Responses events', asyn
   assert.deepEqual(evs.map((e) => e.sequence_number), evs.map((_, i) => i));
 });
 
+test('an error partway through a stream fails the response instead of completing it', async () => {
+  const m = await streamingModel([
+    { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_1', type: 'function', function: { name: 'exec_command', arguments: '{"cmd":' } }] } }] },
+    { choices: [], error: { code: 504, message: 'Upstream idle timeout exceeded' } },
+  ]);
+  open.push(m);
+  const base = await serve(['nvidia', m, {}, { tools: true }]);
+  const res = await post(base, { model: 'auto', stream: true, tools: TOOLS, input: codexInput() });
+  const last = events(await res.text()).at(-1);
+  assert.equal(last.type, 'response.failed');
+  assert.match(last.response.error.message, /Upstream idle timeout exceeded \(504\)/);
+  assert.equal(last.response.output.length, 0);
+});
+
 test('Codex requests only go to models known to handle tools', async () => {
   const unproven = await fakeModel(() => ({ content: 'from unproven' }));
   const proven = await fakeModel(() => ({ content: 'from proven' }));

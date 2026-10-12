@@ -258,7 +258,7 @@ export function fromOpenAI(json, { model, custom = new Set() }) {
  * passed on as it arrives; tool calls are sent whole at the end, since
  * models sometimes send their arguments in pieces out of order.
  */
-export function streamToResponses(body, { model, custom = new Set(), isJson = false, inputTokens = 0 }) {
+export function streamToResponses(body, { model, custom = new Set(), isJson = false, inputTokens = 0, onError = () => {} }) {
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
   const reader = body.getReader();
@@ -330,6 +330,8 @@ export function streamToResponses(body, { model, custom = new Set(), isJson = fa
           usage.input = chunk.usage.prompt_tokens ?? usage.input;
           usage.output = chunk.usage.completion_tokens ?? usage.output;
         }
+        // An error partway through still comes with HTTP 200, as a chunk.
+        if (chunk.error) throw new Error(`${chunk.error.message || 'unknown error'}${chunk.error.code ? ` (${chunk.error.code})` : ''}`);
         const choice = chunk.choices?.[0];
         if (!choice) return;
         const delta = choice.delta ?? choice.message ?? {};
@@ -367,16 +369,21 @@ export function streamToResponses(body, { model, custom = new Set(), isJson = fa
             if (!line.startsWith('data:')) continue;
             const data = line.slice(5).trim();
             if (data === '[DONE]') return end();
+            let chunk;
             try {
-              take(JSON.parse(data));
-              start();
-            } catch {}
+              chunk = JSON.parse(data);
+            } catch {
+              continue;
+            }
+            take(chunk);
+            start();
           }
           if (events > before) return;
         }
       } catch (err) {
         if (finished) return;
         finished = true;
+        onError(err.message);
         start();
         const response = { ...responseObject({ id, model, output: output.filter(Boolean), usage, finish }), status: 'failed', error: { code: 'server_error', message: `SeamlessAI: the provider's answer broke off: ${err.message}` } };
         send('response.failed', { response });

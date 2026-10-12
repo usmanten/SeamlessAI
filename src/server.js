@@ -100,7 +100,7 @@ async function messages(router, req, res, log) {
   }
   res.writeHead(200, { ...headers, 'content-type': 'text/event-stream' });
   const inputTokens = requestNeeds({ ...openai, max_tokens: 0 }).tokens;
-  pipe(streamToAnthropic(result.answer, { model, isJson, inputTokens }), res, target, log);
+  pipe(streamToAnthropic(result.answer, { model, isJson, inputTokens, onError: brokeOff(router, target, log) }), res, target, log);
 }
 
 /**
@@ -137,7 +137,7 @@ async function responses(router, req, res, log) {
   }
   res.writeHead(200, { ...headers, 'content-type': 'text/event-stream' });
   const inputTokens = requestNeeds({ ...openai, max_tokens: 0 }).tokens;
-  pipe(responsesApi.streamToResponses(result.answer, { model, custom, isJson, inputTokens }), res, target, log);
+  pipe(responsesApi.streamToResponses(result.answer, { model, custom, isJson, inputTokens, onError: brokeOff(router, target, log) }), res, target, log);
 }
 
 /** An estimate of a Messages request's input tokens (Claude Code asks before big requests). */
@@ -208,6 +208,18 @@ async function routeRequest(router, body, res, { log, fail, provenTools = false 
     }
   }
   return { response, target, headers, answer: answer ?? new Response('').body };
+}
+
+/**
+ * A provider whose answer fails partway (after a 200) is benched like one
+ * that failed outright, so the client's retry goes somewhere else.
+ */
+function brokeOff(router, target, log) {
+  return (message) => {
+    log(`  ✗ ${target.id} broke off partway: ${message}`);
+    router.onFailure(target, 502, new Headers());
+    router.recordOutcome(target, false);
+  };
 }
 
 function pipe(stream, res, target, log) {

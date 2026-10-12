@@ -114,6 +114,24 @@ function toolUse(id, name, args) {
   return { type: 'tool_use', id: id || `toolu_${randomBytes(12).toString('hex')}`, name, input: parseArgs(args) };
 }
 
+/** The first balanced {...} in text, skipping braces inside strings. */
+function firstObject(text) {
+  const start = text.indexOf('{');
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+    if (inString) {
+      if (c === '\\') i++;
+      else if (c === '"') inString = false;
+    } else if (c === '"') inString = true;
+    else if (c === '{') depth++;
+    else if (c === '}' && --depth === 0) return text.slice(start, i + 1);
+  }
+  return null;
+}
+
 /** Tool arguments as an object. Models sometimes send none, or slightly broken JSON. */
 function parseArgs(args) {
   if (!args) return {};
@@ -122,10 +140,11 @@ function parseArgs(args) {
     const parsed = JSON.parse(args);
     return parsed && typeof parsed === 'object' ? parsed : {};
   } catch {
-    // Text after the JSON object (a stray token or a repeat) is the common case.
-    const end = args.lastIndexOf('}');
+    // Text after the JSON object (a stray token, or the whole object sent
+    // twice) is the common case, so keep the first complete object.
+    const first = firstObject(args);
     try {
-      return JSON.parse(args.slice(0, end + 1));
+      return first ? JSON.parse(first) : {};
     } catch {
       return {};
     }

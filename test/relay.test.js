@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { SessionWatcher, digest } from '../src/sessions.js';
+import { SessionWatcher, digest, claudeOutOfUsage } from '../src/sessions.js';
 import { relay, defaultOrder, parseOrder, commandFor, ensureCodexProfile } from '../src/relay.js';
 import { writeHandoff } from '../src/handoff.js';
 import { loadConfig, saveConfig } from '../src/config.js';
@@ -157,6 +157,15 @@ test('the watcher spots a used-up plan in this folder only', () => {
   const shown = claudeFile('s3');
   fs.writeFileSync(shown, jsonl(...claudeEntries('s3'), { type: 'assistant', isApiErrorMessage: true, error: 'rate_limit', cwd: project, sessionId: 's3', timestamp: NOW, message: { content: [{ type: 'text', text: "You've hit your session limit · resets 11:15pm" }] } }));
   assert.equal(new SessionWatcher('claude', { cwd: project, since }).poll().outOfUsage?.kind, 'rate_limit');
+
+  // Recorded on a real plan (2026-10-11): a request that ran out partway came back
+  // as a generic 429 with a credit code, then the next one carried the plan's limits.
+  const partway = { type: 'assistant', isApiErrorMessage: true, error: 'unknown', apiErrorStatus: 429, apiErrorCode: 'extra_usage_out_of_credits', message: { content: [{ type: 'text', text: "API Error: This request would exceed your account's rate limit. Please try again later." }] } };
+  assert.deepEqual(claudeOutOfUsage(partway), { resetsAt: null, kind: 'extra_usage_out_of_credits' });
+  const rejected = { type: 'assistant', isApiErrorMessage: true, error: 'rate_limit', apiError: 'usage_limit_reached', apiErrorStatus: 429, quotaLimits: { status: 'rejected', resetsAt: 1791768000, rateLimitType: 'five_hour' }, message: { content: [{ type: 'text', text: "You've hit your session limit · resets 9:20pm (America/New_York)" }] } };
+  assert.deepEqual(claudeOutOfUsage(rejected), { resetsAt: 1791768000000, kind: 'five_hour' });
+  // A plain 429 with no usage code is still a brief rate limit.
+  assert.equal(claudeOutOfUsage({ type: 'assistant', isApiErrorMessage: true, error: 'unknown', apiErrorStatus: 429, message: { content: [{ type: 'text', text: 'API Error: Rate limited' }] } }), null);
 
   const cfile = codexFile('c1');
   fs.writeFileSync(cfile, jsonl(...codexEntries('c1'), codexLimit));

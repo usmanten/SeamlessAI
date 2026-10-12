@@ -155,7 +155,11 @@ export class SessionWatcher {
  * error. A 429 that carries plan limits (rateLimits, from Anthropic's usage
  * headers) means the account's allowance is used up, as opposed to a brief
  * rate limit. In the interactive app the message shown to the user is
- * saved too, marked as an API error with the code "rate_limit".
+ * saved too, marked as an API error with the code "rate_limit", and with
+ * the plan's limits ("rejected", and when it resets) when Anthropic sent them.
+ * A request that runs out partway through can instead come back as a 429
+ * with a usage or credit code (seen: "extra_usage_out_of_credits") and the
+ * generic error "unknown".
  */
 export function claudeOutOfUsage(entry) {
   const err = entry.error;
@@ -163,6 +167,10 @@ export function claudeOutOfUsage(entry) {
     return { resetsAt: err.rateLimits.resetsAt ? err.rateLimits.resetsAt * 1000 : null, kind: err.rateLimits.rateLimitType };
   }
   if (entry.type === 'assistant' && entry.isApiErrorMessage) {
+    const quota = entry.quotaLimits ?? entry.apiErrorParams?.rate_limit_info;
+    if (quota?.status === 'rejected') return { resetsAt: quota.resetsAt ? quota.resetsAt * 1000 : null, kind: quota.rateLimitType || 'rate_limit' };
+    const code = entry.apiErrorCode || entry.apiError || '';
+    if (entry.apiErrorStatus === 429 && /usage|credit|quota/i.test(code)) return { resetsAt: null, kind: code };
     const text = (entry.message?.content || []).map((b) => b.text ?? '').join(' ');
     if (entry.error === 'rate_limit' || /usage limit|hit your (\w+ )?limit|limit reached/i.test(text)) return { resetsAt: null, kind: 'rate_limit' };
   }

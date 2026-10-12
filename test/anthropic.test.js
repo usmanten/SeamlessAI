@@ -132,6 +132,19 @@ test('a streamed answer becomes Anthropic events, with tool calls sent whole', a
   assert.deepEqual(up.requests[0].stream_options, { include_usage: true });
 });
 
+test('tool arguments sent twice keep the first complete copy', async () => {
+  const args = '{"file_path":"a.html","content":"<style>p{color:red}</style>"}';
+  const up = await streamingModel([
+    { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_2', type: 'function', function: { name: 'Write', arguments: '' } }] } }] },
+    { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: args } }] } }] },
+    { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: args } }] }, finish_reason: 'tool_calls' }] },
+  ]);
+  const base = await serve(['kilo', up, {}, { tools: true }]);
+  const res = await post(base, '/v1/messages', { model: 'claude-sonnet-4-5', max_tokens: 100, stream: true, tools: TOOLS, messages: [{ role: 'user', content: 'write a.html' }] });
+  const call = sse(await res.text()).find((e) => e.delta?.type === 'input_json_delta');
+  assert.deepEqual(JSON.parse(call.delta.partial_json), { file_path: 'a.html', content: '<style>p{color:red}</style>' });
+});
+
 test('a stream keeps going through chunks that carry nothing to send (reasoning, partial tool calls)', async () => {
   const up = await streamingModel(
     [
